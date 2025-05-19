@@ -1,36 +1,38 @@
-# telnault_api.py
-import os
-import httpx
-from typing import List, Optional
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage, SystemMessage
-from langchain_core.outputs import ChatResult
-from langchain_core.language_models.llms import LLMResult
+const handleSend = async (question?: string) => {
+  const text = question ?? input;
+  if (!text.trim()) return;
 
-class ChatTELnautLLM(BaseChatModel):
-    """自定义 LangChain LLM，用你公司的 GPT API"""
+  setMessages((prev) => [...prev, { type: 'question', text }]);
+  setInput('');
 
-    def __init__(self):
-        self.client = httpx.AsyncClient()
-        self.api_url = os.environ["GPT4_MINI_URL"]
-        self.headers = {
-            "sid": os.environ["GPT4_MINI_SID"],
-            "env": os.environ["GPT4_MINI_ENV"],
-            "apikey": os.environ["GPT4_MINI_API_KEY"],
-            "empno": os.environ.get("EMPNO", ""),
-        }
+  try {
+    const res = await fetch(`http://localhost:8000/chat/${sessionId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text }),
+    });
 
-    async def _agenerate(
-        self,
-        messages: List[BaseMessage],
-        stop: Optional[List[str]] = None,
-    ) -> ChatResult:
-        prompt = "\n".join([msg.content for msg in messages if isinstance(msg, (HumanMessage, SystemMessage))])
+    // Check if response status is not OK
+    if (!res.ok) {
+      console.error('Server returned non-200 status:', res.status);
+      throw new Error(`Server error with status ${res.status}`);
+    }
 
-        response = await self.client.post(
-            self.api_url,
-            json={"input": prompt},
-            headers=self.headers,
-        )
-        output = response.json()["output"]
-        return ChatResult(generations=[[AIMessage(content=output)]])
+    // Try parsing JSON
+    const data = await res.json();
+    console.log('Response from backend:', data);
+
+    // Check if reply field exists
+    if (!data.reply) {
+      throw new Error('Missing "reply" field in response');
+    }
+
+    setMessages((prev) => [...prev, { type: 'answer', text: data.reply }]);
+  } catch (error) {
+    console.error('Error during fetch:', error);
+    setMessages((prev) => [
+      ...prev,
+      { type: 'answer', text: '⚠️ Something went wrong. Could not connect to the server.' },
+    ]);
+  }
+};
