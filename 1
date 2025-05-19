@@ -1,38 +1,14 @@
-const handleSend = async (question?: string) => {
-  const text = question ?? input;
-  if (!text.trim()) return;
-
-  setMessages((prev) => [...prev, { type: 'question', text }]);
-  setInput('');
-
-  try {
-    const res = await fetch(`http://localhost:8000/chat/${sessionId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text }),
-    });
-
-    // Check if response status is not OK
-    if (!res.ok) {
-      console.error('Server returned non-200 status:', res.status);
-      throw new Error(`Server error with status ${res.status}`);
-    }
-
-    // Try parsing JSON
-    const data = await res.json();
-    console.log('Response from backend:', data);
-
-    // Check if reply field exists
-    if (!data.reply) {
-      throw new Error('Missing "reply" field in response');
-    }
-
-    setMessages((prev) => [...prev, { type: 'answer', text: data.reply }]);
-  } catch (error) {
-    console.error('Error during fetch:', error);
-    setMessages((prev) => [
-      ...prev,
-      { type: 'answer', text: '⚠️ Something went wrong. Could not connect to the server.' },
-    ]);
-  }
-};
+curl -X POST https://teloutapqa01.asia.tel.com/TELnautService_API/rest/chat/completions_gpt4omini \
+  -H "Content-Type: application/json" \
+  -H "sid: 9851" \
+  -H "env: 3" \
+  -H "apikey: gw8YHyKh" \
+  -H "empno: 230433" \
+  -d '{
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello, what can you do?"
+      }
+    ]
+  }'
