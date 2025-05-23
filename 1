@@ -1,16 +1,19 @@
-from pydantic import BaseModel
-from typing import List
+import os
+import json
 from datetime import datetime
+from models import SessionData
 
-class ChatMessage(BaseModel):
-    role: str
-    content: str
-
-class SessionData(BaseModel):
-    session_id: str
-    user_id: str
-    start_time: datetime
-    end_time: datetime
-    summary: str
-    title: str 
-    chat_log: List[ChatMessage]
+def save_session_to_json(session: SessionData) -> str:
+    os.makedirs("sessions", exist_ok=True)
+    timestamp = session.end_time.strftime("%Y-%m-%dT%H-%M-%S")
+    filename = f"sessions/session_{timestamp}_{session.session_id}.json"
+    
+    try:
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(session.dict(), f, ensure_ascii=False, indent=2, default=str)
+        print("[save_session] Wrote:", os.path.abspath(filename))
+    except Exception as e:
+        print("[save_session] ❌ Failed to write JSON:", str(e))
+        print("[save_session] ❌ summary content:", session.summary)
+        raise
+    return filename
