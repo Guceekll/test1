@@ -1,19 +1,109 @@
-import os
-import json
-from datetime import datetime
-from models import SessionData
+'use client';
 
-def save_session_to_json(session: SessionData) -> str:
-    os.makedirs("sessions", exist_ok=True)
-    timestamp = session.end_time.strftime("%Y-%m-%dT%H-%M-%S")
-    filename = f"sessions/session_{timestamp}_{session.session_id}.json"
-    
-    try:
-        with open(filename, "w", encoding="utf-8") as f:
-            json.dump(session.dict(), f, ensure_ascii=False, indent=2, default=str)
-        print("[save_session] Wrote:", os.path.abspath(filename))
-    except Exception as e:
-        print("[save_session] ❌ Failed to write JSON:", str(e))
-        print("[save_session] ❌ summary content:", session.summary)
-        raise
-    return filename
+import { useParams, useSearchParams } from 'next/navigation';
+import { useState, useEffect, useRef } from 'react';
+import Sidebar from '@/components/Sidebar';
+import ChatWindow from '@/components/ChatWindow';
+import InputPanel from '@/components/InputPanel';
+
+interface Message {
+  type: 'question' | 'answer';
+  text: string;
+}
+
+export default function InterviewPage() {
+  const { sessionId } = useParams();
+  const searchParams = useSearchParams();
+  const qParam = searchParams.get('q');
+
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [finished, setFinished] = useState(false);
+  const [summary, setSummary] = useState('');
+  const [saving, setSaving] = useState(false);
+  const sentOnceRef = useRef(false);
+
+  useEffect(() => {
+    if (qParam && !sentOnceRef.current) {
+      sentOnceRef.current = true;
+      setInput(qParam);
+      handleSend(qParam);
+    }
+  }, [qParam]);
+
+  const handleSend = async (question?: string) => {
+    const text = question ?? input;
+    if (!text.trim()) return;
+
+    setMessages((prev) => [...prev, { type: 'question', text }]);
+    setInput('');
+
+    try {
+      const res = await fetch(`http://localhost:8000/chat/${sessionId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text })
+      });
+
+      const data = await res.json();
+
+      setMessages((prev) => [...prev, { type: 'answer', text: data.reply }]);
+    } catch (error) {
+      setMessages((prev) => [...prev, {
+        type: 'answer',
+        text: '⚠️ 出错了，无法连接到服务器。'
+      }]);
+    }
+  };
+
+  const handleFinish = async () => {
+    if (saving || finished) return;
+    setSaving(true);
+
+    try {
+      const res = await fetch(`http://localhost:8000/end_session/${sessionId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: 'user001', // TODO: Replace with real user
+          style: '共情式'
+        })
+      });
+
+      const data = await res.json();
+      setSummary(data.summary);
+      setFinished(true);
+    } catch (error) {
+      setSummary('⚠️ 保存失败，请稍后重试。');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex h-screen">
+      <Sidebar
+        onNewChat={() => window.location.href = '/'}
+        onSelectCategory={(cat) => console.log('Category selected:', cat)}
+        onSelectRecentChat={(title) => console.log('Chat selected:', title)}
+      />
+      <div className="flex flex-col flex-1 bg-white">
+        {finished && (
+          <div className="bg-green-100 p-4 text-green-800 text-sm">
+            ✅ 采访已结束，以下是总结：
+            <div className="mt-2 text-gray-700 whitespace-pre-wrap">{summary}</div>
+          </div>
+        )}
+        <ChatWindow messages={messages} />
+        <InputPanel
+          value={input}
+          onChange={setInput}
+          onSend={() => handleSend()}
+          onUpload={() => console.log('Upload image')}
+          onFinish={handleFinish}
+          showFinish={true}
+        />
+      </div>
+    </div>
+  );
+}
