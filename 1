@@ -1,1 +1,175 @@
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import os
+from dotenv import load_dotenv
+from typing import Dict
+from uuid import uuid4
+from datetime import datetime
 
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.runnables import RunnableWithMessageHistory
+
+from session_utils import (
+    user_might_want_to_end,
+    has_repeated_answers,
+    user_gave_blank_responses,
+)
+from session_storage import save_session_to_json
+from models import SessionData, ChatMessage
+from openai import OpenAI
+
+load_dotenv()
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+store: Dict[str, Dict[str, object]] = {}
+
+class ChatRequest(BaseModel):
+    message: str
+
+class ChatResponse(BaseModel):
+    reply: str
+    show_end_prompt: bool = False
+
+class EndSessionRequest(BaseModel):
+    user_id: str
+    style: str
+
+llm = ChatOpenAI(
+    model="gpt-4o-mini",
+    temperature=0.7,
+    openai_api_key=os.getenv("OPENAI_API_KEY"),
+)
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "你是一个专业的半导体设备故障采访助手。请一步步引导用户描述问题现象、出现时机、相关操作和可能原因。"),
+    MessagesPlaceholder(variable_name="messages"),
+])
+
+chain = prompt | llm
+
+chain_with_history = RunnableWithMessageHistory(
+    chain,
+    lambda session_id: store.setdefault(session_id, {
+        "history": InMemoryChatMessageHistory(),
+        "asked_end": False,
+        "answer_log": [],
+        "user_inputs": [],
+        "user_id": None,
+        "style": None,
+        "start_time": datetime.utcnow(),
+    })["history"],
+    input_messages_key="input",
+    history_messages_key="messages"
+)
+
+@app.post("/chat/{session_id}", response_model=ChatResponse)
+async def chat(session_id: str, req: ChatRequest):
+    if session_id not in store:
+        store[session_id] = {
+            "history": InMemoryChatMessageHistory(),
+            "asked_end": False,
+            "answer_log": [],
+            "user_inputs": [],
+            "user_id": None,
+            "style": None,
+            "start_time": datetime.utcnow(),
+        }
+
+    session = store[session_id]
+    asked_end = session["asked_end"]
+    answer_log = session["answer_log"]
+    user_inputs = session["user_inputs"]
+
+    user_inputs.append(req.message.strip())
+    if len(user_inputs) > 3:
+        user_inputs.pop(0)
+
+    if not asked_end and user_might_want_to_end(req.message):
+        session["asked_end"] = True
+        return ChatResponse(reply="看起来您可能想结束采访，请问是否还有其他问题要补充？", show_end_prompt=True)
+
+    if not asked_end and user_gave_blank_responses(user_inputs):
+        session["asked_end"] = True
+        return ChatResponse(reply="您好像暂时没有更多补充，如果需要，我们可以结束这次采访。", show_end_prompt=True)
+
+    response = await chain_with_history.ainvoke(
+        {"input": req.message},
+        config={"configurable": {"session_id": session_id}},
+    )
+    answer_text = response.content.strip()
+    answer_log.append(answer_text)
+
+    if not asked_end and has_repeated_answers(answer_log):
+        session["asked_end"] = True
+        return ChatResponse(reply="我注意到我们有些回答已经重复多次，请问是否需要结束本次采访？", show_end_prompt=True)
+
+    return ChatResponse(reply=answer_text)
+
+@app.post("/end_session/{session_id}")
+def end_session(session_id: str, req: EndSessionRequest):
+    if session_id not in store:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session = store[session_id]
+    session["user_id"] = req.user_id
+    session["style"] = req.style
+
+    messages = session["history"].messages
+    full_chat = "\n".join([f"{m.type}: {m.content}" for m in messages])
+
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+    try:
+        # 生成总结
+        summary_prompt = f"请你总结以下用户与 AI 的采访对话内容，聚焦设备问题描述、排查过程和结论：\n\n{full_chat}\n\n总结："
+        summary_response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "你是一个擅长总结对话的助手。"},
+                {"role": "user", "content": summary_prompt},
+            ],
+            temperature=0.5,
+        )
+        summary = summary_response.choices[0].message.content.strip()
+
+        # 生成标题
+        title_prompt = f"请基于以下采访内容，生成一个简洁明确的中文标题，用于表示这段采访的主题：\n\n{summary}\n\n标题："
+        title_response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "你是一个擅长命名的助手。"},
+                {"role": "user", "content": title_prompt},
+            ],
+            temperature=0.4,
+        )
+        title = title_response.choices[0].message.content.strip()
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    chat_log = [ChatMessage(role=m.type, content=m.content) for m in messages]
+
+    session_data = SessionData(
+        session_id=session_id,
+        user_id=session["user_id"] or "unknown",
+        start_time=session["start_time"],
+        end_time=datetime.utcnow(),
+        summary=summary,
+        title=title, 
+        chat_log=chat_log,
+    )
+
+    path = save_session_to_json(session_data)
+    return {"message": "Session saved", "file": path, "summary": summary, "title": title}
