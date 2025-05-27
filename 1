@@ -1,3 +1,9 @@
+curl -X POST http://chikiu.asia.tel.com:3000/v1/chat/completions \
+-H "Authorization: Bearer 你的key" \
+-H "Content-Type: application/json" \
+-d '{"model": "gpt-4", "messages": [{"role": "user", "content": "你好"}]}'
+
+
 sudo find / -type f -size +100M -exec ls -lh {} \; | sort -k 5 -rh | head -n 20
 
 import requests
