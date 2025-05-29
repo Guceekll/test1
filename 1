@@ -1,147 +1,72 @@
 'use client';
 
-import { useParams, useSearchParams } from 'next/navigation';
-import { useState, useEffect, useRef } from 'react';
-import Sidebar from '@/components/Sidebar';
-import ChatWindow from '@/components/ChatWindow';
-import InputPanel from '@/components/InputPanel';
-
-interface Message {
-  type: 'question' | 'answer' | 'loading';
-  text: string;
-  summary?: boolean;
+interface InputPanelProps {
+  value: string;
+  onChange: (val: string) => void;
+  onSend: () => void;
+  onUpload?: () => void;
+  onFinish?: () => void;
+  showFinish?: boolean;
+  isFinishing?: boolean;
 }
 
-export default function InterviewPage() {
-  const { sessionId } = useParams();
-  const searchParams = useSearchParams();
-  const qParam = searchParams.get('q');
-
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [finished, setFinished] = useState(false);
-  const [summary, setSummary] = useState('');
-  const [saving, setSaving] = useState(false);
-  const sentOnceRef = useRef(false);
-
-  useEffect(() => {
-    if (qParam && !sentOnceRef.current) {
-      sentOnceRef.current = true;
-      setInput(qParam);
-      handleSend(qParam);
-    }
-  }, [qParam]);
-
-  const handleSend = async (question?: string) => {
-    const text = question ?? input;
-    if (!text.trim()) return;
-
-    setMessages((prev) => [...prev, { type: 'question', text }]);
-    setInput('');
-    setMessages((prev) => [...prev, { type: 'loading', text: '...' }]);
-
-    try {
-      const res = await fetch(`http://localhost:8000/chat/${sessionId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text })
-      });
-
-      const data = await res.json();
-
-      setMessages((prev) => {
-        const newMessages = [...prev];
-        const idx = newMessages.findIndex((msg) => msg.type === 'loading');
-        if (idx !== -1) {
-          newMessages[idx] = { type: 'answer', text: data.reply };
-        } else {
-          newMessages.push({ type: 'answer', text: data.reply });
-        }
-        return newMessages;
-      });
-    } catch (error) {
-      setMessages((prev) => {
-        const newMessages = [...prev];
-        const idx = newMessages.findIndex((msg) => msg.type === 'loading');
-        if (idx !== -1) {
-          newMessages[idx] = { type: 'answer', text: '⚠️ 出错了，无法连接到服务器。' };
-        } else {
-          newMessages.push({ type: 'answer', text: '⚠️ 出错了，无法连接到服务器。' });
-        }
-        return newMessages;
-      });
-    }
-  };
-
-  const handleFinish = async () => {
-    if (saving || finished) return;
-    setSaving(true);
-
-    // 插入“总结生成中”loading气泡
-    setMessages((prev) => [...prev, { type: 'loading', text: '📄 总结生成中，请稍候...' }]);
-
-    try {
-      const res = await fetch(`http://localhost:8000/end_session/${sessionId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: 'user001',
-          style: '共情式'
-        })
-      });
-
-      const data = await res.json();
-      setSummary(data.summary);
-
-      setMessages((prev) => {
-        const newMessages = [...prev];
-        const idx = newMessages.findIndex((msg) => msg.type === 'loading' && msg.text.includes('总结生成中'));
-        if (idx !== -1) {
-          newMessages[idx] = {
-            type: 'answer',
-            text: `✅ 采访已结束。以下是总结：\n\n${data.summary}`,
-            summary: true
-          };
-        } else {
-          newMessages.push({
-            type: 'answer',
-            text: `✅ 采访已结束。以下是总结：\n\n${data.summary}`,
-            summary: true
-          });
-        }
-        return newMessages;
-      });
-
-      setFinished(true);
-    } catch (error) {
-      setMessages((prev) => [
-        ...prev,
-        { type: 'answer', text: '⚠️ 保存失败，请稍后重试。' }
-      ]);
-    } finally {
-      setSaving(false);
+const InputPanel = ({
+  value,
+  onChange,
+  onSend,
+  onUpload,
+  onFinish,
+  showFinish = true,
+  isFinishing = false,
+}: InputPanelProps) => {
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      onSend();
     }
   };
 
   return (
-    <div className="flex h-screen">
-      <Sidebar
-        onNewChat={() => window.location.href = '/'}
-        onSelectCategory={(cat) => console.log('Category selected:', cat)}
-        onSelectRecentChat={(title) => console.log('Chat selected:', title)}
-      />
-      <div className="flex flex-col flex-1 bg-white">
-        <ChatWindow messages={messages} />
-        <InputPanel
-          value={input}
-          onChange={setInput}
-          onSend={() => handleSend()}
-          onUpload={() => console.log('Upload image')}
-          onFinish={handleFinish}
-          showFinish={true}
-          isFinishing={saving} // ✅ 传递 saving 状态
-        />
+    <div className="w-full px-4 py-3 border-t border-gray-200 bg-white flex justify-center">
+      <div className="w-full max-w-4xl flex items-center justify-between gap-4">
+        <div className="flex items-center flex-1 px-4 py-2 border border-black rounded-full shadow bg-gradient-to-b from-white to-gray-50">
+          <button onClick={onUpload} className="text-xl text-gray-500" title="Upload file">
+            📎
+          </button>
+          <input
+            type="text"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            onKeyDown={handleKeyPress}
+            placeholder="type your trouble here"
+            className="flex-1 px-4 bg-transparent border-none focus:outline-none text-gray-800 placeholder-gray-400"
+          />
+          <button className="text-xl mx-2" title="Voice input (coming soon)">
+            🎤
+          </button>
+          <button
+            onClick={onSend}
+            className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white text-lg"
+            title="Send"
+          >
+            ➤
+          </button>
+        </div>
+        {showFinish && (
+          <button
+            onClick={onFinish}
+            disabled={isFinishing}
+            className={`flex-shrink-0 px-3 py-2 text-sm rounded transition
+              ${isFinishing ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-gray-300 hover:bg-gray-400'}
+            `}
+            title="Finish this interview"
+          >
+            {isFinishing ? 'Generating...' : 'Finish'}
+          </button>
+        )}
       </div>
     </div>
   );
-}
+};
+
+export default InputPanel;
