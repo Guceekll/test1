@@ -1,26 +1,3 @@
-curl -X POST http://chikiu.asia.tel.com:3000/v1/chat/completions \
--H "Authorization: Bearer 你的key" \
--H "Content-Type: application/json" \
--d '{"model": "gpt-4", "messages": [{"role": "user", "content": "你好"}]}'
-
-
-sudo find / -type f -size +100M -exec ls -lh {} \; | sort -k 5 -rh | head -n 20
-
-import requests
-
-def call_webui(messages, model="gpt-4", base_url="http://localhost:11434/v1/chat/completions", temperature=0.5):
-    headers = {"Content-Type": "application/json"}
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature
-    }
-    response = requests.post(base_url, headers=headers, json=payload)
-    response.raise_for_status()
-    return response.json()["choices"][0]["message"]["content"].strip()
-
-
-
 'use client';
 
 import { useParams, useSearchParams } from 'next/navigation';
@@ -30,8 +7,9 @@ import ChatWindow from '@/components/ChatWindow';
 import InputPanel from '@/components/InputPanel';
 
 interface Message {
-  type: 'question' | 'answer';
+  type: 'question' | 'answer' | 'loading';
   text: string;
+  summary?: boolean;
 }
 
 export default function InterviewPage() {
@@ -60,6 +38,7 @@ export default function InterviewPage() {
 
     setMessages((prev) => [...prev, { type: 'question', text }]);
     setInput('');
+    setMessages((prev) => [...prev, { type: 'loading', text: '...' }]);
 
     try {
       const res = await fetch(`http://localhost:8000/chat/${sessionId}`, {
@@ -70,12 +49,27 @@ export default function InterviewPage() {
 
       const data = await res.json();
 
-      setMessages((prev) => [...prev, { type: 'answer', text: data.reply }]);
+      setMessages((prev) => {
+        const newMessages = [...prev];
+        const idx = newMessages.findIndex((msg) => msg.type === 'loading');
+        if (idx !== -1) {
+          newMessages[idx] = { type: 'answer', text: data.reply };
+        } else {
+          newMessages.push({ type: 'answer', text: data.reply });
+        }
+        return newMessages;
+      });
     } catch (error) {
-      setMessages((prev) => [...prev, {
-        type: 'answer',
-        text: '⚠️ 出错了，无法连接到服务器。'
-      }]);
+      setMessages((prev) => {
+        const newMessages = [...prev];
+        const idx = newMessages.findIndex((msg) => msg.type === 'loading');
+        if (idx !== -1) {
+          newMessages[idx] = { type: 'answer', text: '⚠️ 出错了，无法连接到服务器。' };
+        } else {
+          newMessages.push({ type: 'answer', text: '⚠️ 出错了，无法连接到服务器。' });
+        }
+        return newMessages;
+      });
     }
   };
 
@@ -83,21 +77,47 @@ export default function InterviewPage() {
     if (saving || finished) return;
     setSaving(true);
 
+    // 插入“总结生成中”loading气泡
+    setMessages((prev) => [...prev, { type: 'loading', text: '📄 总结生成中，请稍候...' }]);
+
     try {
       const res = await fetch(`http://localhost:8000/end_session/${sessionId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: 'user001', // TODO: Replace with real user
+          user_id: 'user001',
           style: '共情式'
         })
       });
 
       const data = await res.json();
       setSummary(data.summary);
+
+      setMessages((prev) => {
+        const newMessages = [...prev];
+        const idx = newMessages.findIndex((msg) => msg.type === 'loading' && msg.text.includes('总结生成中'));
+        if (idx !== -1) {
+          newMessages[idx] = {
+            type: 'answer',
+            text: `✅ 采访已结束。以下是总结：\n\n${data.summary}`,
+            summary: true
+          };
+        } else {
+          newMessages.push({
+            type: 'answer',
+            text: `✅ 采访已结束。以下是总结：\n\n${data.summary}`,
+            summary: true
+          });
+        }
+        return newMessages;
+      });
+
       setFinished(true);
     } catch (error) {
-      setSummary('⚠️ 保存失败，请稍后重试。');
+      setMessages((prev) => [
+        ...prev,
+        { type: 'answer', text: '⚠️ 保存失败，请稍后重试。' }
+      ]);
     } finally {
       setSaving(false);
     }
@@ -111,12 +131,6 @@ export default function InterviewPage() {
         onSelectRecentChat={(title) => console.log('Chat selected:', title)}
       />
       <div className="flex flex-col flex-1 bg-white">
-        {finished && (
-          <div className="bg-green-100 p-4 text-green-800 text-sm">
-            ✅ 采访已结束，以下是总结：
-            <div className="mt-2 text-gray-700 whitespace-pre-wrap">{summary}</div>
-          </div>
-        )}
         <ChatWindow messages={messages} />
         <InputPanel
           value={input}
@@ -125,30 +139,9 @@ export default function InterviewPage() {
           onUpload={() => console.log('Upload image')}
           onFinish={handleFinish}
           showFinish={true}
+          isFinishing={saving} // ✅ 传递 saving 状态
         />
       </div>
     </div>
   );
 }
-
-import os
-import json
-from datetime import datetime
-from models import SessionData
-
-def save_session_to_json(session: SessionData) -> str:
-    os.makedirs("sessions", exist_ok=True)
-    timestamp = session.end_time.strftime("%Y-%m-%dT%H-%M-%S")
-    filename = f"sessions/session_{timestamp}_{session.session_id}.json"
-    
-    try:
-        with open(filename, "w", encoding="utf-8") as f:
-            json.dump(session.dict(), f, ensure_ascii=False, indent=2, default=str)
-        print("[save_session] Wrote:", os.path.abspath(filename))
-    except Exception as e:
-        print("[save_session] ❌ Failed to write JSON:", str(e))
-        print("[save_session] ❌ summary content:", session.summary)
-        raise
-    return filename
-
-
