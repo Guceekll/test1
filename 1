@@ -1,181 +1,189 @@
-'use client';
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import os
+from dotenv import load_dotenv
+from typing import Dict
+from uuid import uuid4
+from datetime import datetime
 
-import { useParams, useSearchParams } from 'next/navigation';
-import { useState, useEffect, useRef } from 'react';
-import Sidebar from '@/components/Sidebar';
-import ChatWindow from '@/components/ChatWindow';
-import InputPanel from '@/components/InputPanel';
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.runnables import RunnableWithMessageHistory
 
-interface Message {
-  type: 'question' | 'answer' | 'loading';
-  text: string;
-  summary?: boolean;
-  fileName?: string;
-  fileType?: string;
-}
+from session_utils import (
+    user_might_want_to_end,
+    has_repeated_answers,
+    user_gave_blank_responses,
+)
+from session_storage import save_session_to_json
+from models import SessionData, ChatMessage
+from openai import OpenAI
 
-export default function InterviewPage() {
-  const { sessionId } = useParams();
-  const searchParams = useSearchParams();
-  const qParam = searchParams.get('q');
+load_dotenv()
 
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [finished, setFinished] = useState(false);
-  const [summary, setSummary] = useState('');
-  const [saving, setSaving] = useState(false);
-  const sentOnceRef = useRef(false);
+app = FastAPI()
 
-  useEffect(() => {
-    if (qParam && !sentOnceRef.current) {
-      sentOnceRef.current = true;
-      setInput(qParam);
-      handleSend(qParam);
-    }
-  }, [qParam]);
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-  const handleSend = async (question?: string, file?: File) => {
-    const text = question ?? input;
-    if (!text.trim() && !file) return;
+store: Dict[str, Dict[str, object]] = {}
 
-    // 1. 先处理文件上传
-    if (file) {
-      const formData = new FormData();
-      formData.append('file', file);
+class ChatRequest(BaseModel):
+    message: str
 
-      try {
-        await fetch('http://localhost:8000/upload', {
-          method: 'POST',
-          body: formData,
-        });
+class ChatResponse(BaseModel):
+    reply: str
+    show_end_prompt: bool = False
 
-        // ✅ 添加文件消息
-        setMessages((prev) => [
-          ...prev,
-          {
-            type: 'question',
-            text: '',
-            fileName: file.name,
-            fileType: file.type?.split('/')[1] || 'file',
-          },
-        ]);
-      } catch (error) {
-        console.error('Upload failed:', error);
-        setMessages((prev) => [
-          ...prev,
-          { type: 'answer', text: '❌ 文件上传失败，请稍后重试。' },
-        ]);
-        return;
-      }
-    }
+class EndSessionRequest(BaseModel):
+    user_id: str
 
-    // 2. 处理文本输入
-    if (text.trim()) {
-      setMessages((prev) => [...prev, { type: 'question', text }]);
-      setInput('');
-      setMessages((prev) => [...prev, { type: 'loading', text: '...' }]);
+llm = ChatOpenAI(
+    model="gpt-4o-mini",
+    temperature=0.7,
+    openai_api_key=os.getenv("OPENAI_API_KEY"),
+)
 
-      try {
-        const res = await fetch(`http://localhost:8000/chat/${sessionId}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text }),
-        });
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "你是一个专业的半导体设备故障采访助手。请一步步引导用户描述问题现象、出现时机、相关操作和可能原因。"),
+    MessagesPlaceholder(variable_name="messages"),
+])
 
-        const data = await res.json();
+chain = prompt | llm
 
-        setMessages((prev) => {
-          const newMessages = [...prev];
-          const idx = newMessages.findIndex((msg) => msg.type === 'loading');
-          if (idx !== -1) {
-            newMessages[idx] = { type: 'answer', text: data.reply };
-          } else {
-            newMessages.push({ type: 'answer', text: data.reply });
-          }
-          return newMessages;
-        });
-      } catch (error) {
-        setMessages((prev) => {
-          const newMessages = [...prev];
-          const idx = newMessages.findIndex((msg) => msg.type === 'loading');
-          if (idx !== -1) {
-            newMessages[idx] = { type: 'answer', text: '⚠️ 出错了，无法连接到服务器。' };
-          } else {
-            newMessages.push({ type: 'answer', text: '⚠️ 出错了，无法连接到服务器。' });
-          }
-          return newMessages;
-        });
-      }
-    }
-  };
+chain_with_history = RunnableWithMessageHistory(
+    chain,
+    lambda session_id: store.setdefault(session_id, {
+        "history": InMemoryChatMessageHistory(),
+        "asked_end": False,
+        "answer_log": [],
+        "user_inputs": [],
+        "user_id": None,
+        "start_time": datetime.utcnow(),
+    })["history"],
+    input_messages_key="input",
+    history_messages_key="messages"
+)
 
-  const handleFinish = async () => {
-    if (saving || finished) return;
-    setSaving(true);
-
-    setMessages((prev) => [...prev, { type: 'loading', text: '📄 总结生成中，请稍候...' }]);
-
-    try {
-      const res = await fetch(`http://localhost:8000/end_session/${sessionId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: 'user001',
-        })
-      });
-
-      const data = await res.json();
-      setSummary(data.summary);
-
-      setMessages((prev) => {
-        const newMessages = [...prev];
-        const idx = newMessages.findIndex((msg) => msg.type === 'loading' && msg.text.includes('总结生成中'));
-        if (idx !== -1) {
-          newMessages[idx] = {
-            type: 'answer',
-            text: `✅ 采访已结束。以下是总结：\n\n${data.summary}`,
-            summary: true
-          };
-        } else {
-          newMessages.push({
-            type: 'answer',
-            text: `✅ 采访已结束。以下是总结：\n\n${data.summary}`,
-            summary: true
-          });
+@app.post("/chat/{session_id}", response_model=ChatResponse)
+async def chat(session_id: str, req: ChatRequest):
+    if session_id not in store:
+        store[session_id] = {
+            "history": InMemoryChatMessageHistory(),
+            "asked_end": False,
+            "answer_log": [],
+            "user_inputs": [],
+            "user_id": None,
+            "start_time": datetime.utcnow(),
         }
-        return newMessages;
-      });
 
-      setFinished(true);
-    } catch (error) {
-      setMessages((prev) => [
-        ...prev,
-        { type: 'answer', text: '⚠️ 保存失败，请稍后重试。' }
-      ]);
-    } finally {
-      setSaving(false);
-    }
-  };
+    session = store[session_id]
+    asked_end = session["asked_end"]
+    answer_log = session["answer_log"]
+    user_inputs = session["user_inputs"]
 
-  return (
-    <div className="flex h-screen">
-      <Sidebar
-        onNewChat={() => window.location.href = '/'}
-        onSelectCategory={(cat) => console.log('Category selected:', cat)}
-        onSelectRecentChat={(title) => console.log('Chat selected:', title)}
-      />
-      <div className="flex flex-col flex-1 bg-white">
-        <ChatWindow messages={messages} />
-        <InputPanel
-          value={input}
-          onChange={setInput}
-          onSend={(text, file) => handleSend(text, file)} 
-          onUpload={(file) => handleSend(undefined, file)} 
-          onFinish={handleFinish}
-          showFinish={true}
-          isFinishing={saving}
-        />
-      </div>
-    </div>
-  );
-}
+    user_inputs.append(req.message.strip())
+    if len(user_inputs) > 3:
+        user_inputs.pop(0)
+
+    if not asked_end and user_might_want_to_end(req.message):
+        session["asked_end"] = True
+        return ChatResponse(reply="看起来您可能想结束采访，请问是否还有其他问题要补充？", show_end_prompt=True)
+
+    if not asked_end and user_gave_blank_responses(user_inputs):
+        session["asked_end"] = True
+        return ChatResponse(reply="您好像暂时没有更多补充，如果需要，我们可以结束这次采访。", show_end_prompt=True)
+
+    response = await chain_with_history.ainvoke(
+        {"input": req.message},
+        config={"configurable": {"session_id": session_id}},
+    )
+    answer_text = response.content.strip()
+    answer_log.append(answer_text)
+
+    if not asked_end and has_repeated_answers(answer_log):
+        session["asked_end"] = True
+        return ChatResponse(reply="我注意到我们有些回答已经重复多次，请问是否需要结束本次采访？", show_end_prompt=True)
+
+    return ChatResponse(reply=answer_text)
+
+@app.post("/end_session/{session_id}")
+def end_session(session_id: str, req: EndSessionRequest):
+    if session_id not in store:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session = store[session_id]
+    session["user_id"] = req.user_id
+
+    messages = session["history"].messages
+    full_chat = "\n".join([f"{m.type}: {m.content}" for m in messages])
+
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+    try:
+        # 生成总结
+        summary_prompt = f"请你总结以下用户与 AI 的采访对话内容，聚焦设备问题描述、排查过程和结论：\n\n{full_chat}\n\n总结："
+        summary_response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "你是一个擅长总结对话的助手。"},
+                {"role": "user", "content": summary_prompt},
+            ],
+            temperature=0.5,
+        )
+        summary = summary_response.choices[0].message.content.strip()
+
+        # 生成标题
+        title_prompt = f"请基于以下采访内容，生成一个简洁明确的中文标题，用于表示这段采访的主题：\n\n{summary}\n\n标题："
+        title_response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "你是一个擅长命名的助手。"},
+                {"role": "user", "content": title_prompt},
+            ],
+            temperature=0.4,
+        )
+        title = title_response.choices[0].message.content.strip()
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    chat_log = [ChatMessage(role=m.type, content=m.content) for m in messages]
+
+    session_data = SessionData(
+        session_id=session_id,
+        user_id=session["user_id"] or "unknown",
+        start_time=session["start_time"],
+        end_time=datetime.utcnow(),
+        summary=summary,
+        title=title, 
+        chat_log=chat_log,
+    )
+
+    path = save_session_to_json(session_data)
+    return {"message": "Session saved", "file": path, "summary": summary, "title": title}
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    try:
+        os.makedirs("uploaded_files", exist_ok=True)
+        file_location = f"uploaded_files/{file.filename}"
+
+        with open(file_location, "wb") as f:
+            content = await file.read()
+            f.write(content)
+
+        return {
+            "message": "File uploaded successfully",
+            "filename": file.filename,
+            "saved_to": file_location
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
