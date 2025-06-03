@@ -1,142 +1,181 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useParams, useSearchParams } from 'next/navigation';
+import { useState, useEffect, useRef } from 'react';
+import Sidebar from '@/components/Sidebar';
+import ChatWindow from '@/components/ChatWindow';
+import InputPanel from '@/components/InputPanel';
 
-interface InputPanelProps {
-  value: string;
-  onChange: (val: string) => void;
-  onSend: (text: string, file?: File) => void;
-  onUpload?: (file: File) => void;
-  onFinish?: () => void;
-  showFinish?: boolean;
-  isFinishing?: boolean;
+interface Message {
+  type: 'question' | 'answer' | 'loading';
+  text: string;
+  summary?: boolean;
+  fileName?: string;
+  fileType?: string;
 }
 
-const InputPanel = ({
-  value,
-  onChange,
-  onSend,
-  onFinish,
-  showFinish = true,
-  isFinishing = false,
-}: InputPanelProps) => {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+export default function InterviewPage() {
+  const { sessionId } = useParams();
+  const searchParams = useSearchParams();
+  const qParam = searchParams.get('q');
 
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      triggerSend();
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [finished, setFinished] = useState(false);
+  const [summary, setSummary] = useState('');
+  const [saving, setSaving] = useState(false);
+  const sentOnceRef = useRef(false);
+
+  useEffect(() => {
+    if (qParam && !sentOnceRef.current) {
+      sentOnceRef.current = true;
+      setInput(qParam);
+      handleSend(qParam);
+    }
+  }, [qParam]);
+
+  const handleSend = async (question?: string, file?: File) => {
+    const text = question ?? input;
+    if (!text.trim() && !file) return;
+
+    // 1. 先处理文件上传
+    if (file) {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        await fetch('http://localhost:8000/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        // ✅ 添加文件消息
+        setMessages((prev) => [
+          ...prev,
+          {
+            type: 'question',
+            text: '',
+            fileName: file.name,
+            fileType: file.type?.split('/')[1] || 'file',
+          },
+        ]);
+      } catch (error) {
+        console.error('Upload failed:', error);
+        setMessages((prev) => [
+          ...prev,
+          { type: 'answer', text: '❌ 文件上传失败，请稍后重试。' },
+        ]);
+        return;
+      }
+    }
+
+    // 2. 处理文本输入
+    if (text.trim()) {
+      setMessages((prev) => [...prev, { type: 'question', text }]);
+      setInput('');
+      setMessages((prev) => [...prev, { type: 'loading', text: '...' }]);
+
+      try {
+        const res = await fetch(`http://localhost:8000/chat/${sessionId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text }),
+        });
+
+        const data = await res.json();
+
+        setMessages((prev) => {
+          const newMessages = [...prev];
+          const idx = newMessages.findIndex((msg) => msg.type === 'loading');
+          if (idx !== -1) {
+            newMessages[idx] = { type: 'answer', text: data.reply };
+          } else {
+            newMessages.push({ type: 'answer', text: data.reply });
+          }
+          return newMessages;
+        });
+      } catch (error) {
+        setMessages((prev) => {
+          const newMessages = [...prev];
+          const idx = newMessages.findIndex((msg) => msg.type === 'loading');
+          if (idx !== -1) {
+            newMessages[idx] = { type: 'answer', text: '⚠️ 出错了，无法连接到服务器。' };
+          } else {
+            newMessages.push({ type: 'answer', text: '⚠️ 出错了，无法连接到服务器。' });
+          }
+          return newMessages;
+        });
+      }
     }
   };
 
-  const triggerSend = () => {
-    if (!value.trim() && !selectedFile) return;
-    onSend(value, selectedFile || undefined);
-    onChange('');
-    setSelectedFile(null);
-  };
+  const handleFinish = async () => {
+    if (saving || finished) return;
+    setSaving(true);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setSelectedFile(file);
+    setMessages((prev) => [...prev, { type: 'loading', text: '📄 总结生成中，请稍候...' }]);
+
+    try {
+      const res = await fetch(`http://localhost:8000/end_session/${sessionId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: 'user001',
+        })
+      });
+
+      const data = await res.json();
+      setSummary(data.summary);
+
+      setMessages((prev) => {
+        const newMessages = [...prev];
+        const idx = newMessages.findIndex((msg) => msg.type === 'loading' && msg.text.includes('总结生成中'));
+        if (idx !== -1) {
+          newMessages[idx] = {
+            type: 'answer',
+            text: `✅ 采访已结束。以下是总结：\n\n${data.summary}`,
+            summary: true
+          };
+        } else {
+          newMessages.push({
+            type: 'answer',
+            text: `✅ 采访已结束。以下是总结：\n\n${data.summary}`,
+            summary: true
+          });
+        }
+        return newMessages;
+      });
+
+      setFinished(true);
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        { type: 'answer', text: '⚠️ 保存失败，请稍后重试。' }
+      ]);
+    } finally {
+      setSaving(false);
     }
   };
 
   return (
-    <div className="w-full px-4 py-3 border-t border-gray-200 bg-white flex justify-center">
-      <div className="w-full max-w-4xl flex flex-col gap-3">
-        {/* ✅ 文件卡片 */}
-        {selectedFile && (
-          <div className="flex items-center gap-3 bg-pink-100 rounded-xl px-4 py-3 w-fit shadow-sm border border-pink-200">
-            {/* 文件信息 */}
-            <div className="flex flex-col text-sm max-w-[200px]">
-              <span className="font-semibold text-gray-800 truncate">{selectedFile.name}</span>
-              <span className="text-gray-500 text-xs">
-                {selectedFile.type?.split('/')[1]?.toUpperCase() || 'FILE'}
-              </span>
-            </div>
-
-            {/* 删除按钮 */}
-            <button
-              onClick={() => setSelectedFile(null)}
-              className="ml-2 text-gray-500 hover:text-gray-800 rounded-full p-1 transition"
-              title="Remove file"
-            >
-              <svg
-                className="h-4 w-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
-          </div>
-        )}
-
-        {/* ✅ 输入框 + Finish 按钮同一行 */}
-        <div className="flex items-center gap-2">
-          {/* 输入区域 */}
-          <div className="flex items-center flex-1 px-4 py-2 border border-black rounded-full shadow bg-gradient-to-b from-white to-gray-50">
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="text-xl text-gray-500"
-              title="Upload file"
-            >
-              📎
-            </button>
-            <input
-              type="file"
-              ref={fileInputRef}
-              className="hidden"
-              onChange={handleFileChange}
-            />
-
-            <input
-              type="text"
-              value={value}
-              onChange={(e) => onChange(e.target.value)}
-              onKeyDown={handleKeyPress}
-              placeholder="type your trouble here"
-              className="flex-1 px-4 bg-transparent border-none focus:outline-none text-gray-800 placeholder-gray-400"
-            />
-
-            <button className="text-xl mx-2" title="Voice input (coming soon)">🎤</button>
-            <button
-              onClick={triggerSend}
-              className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white text-lg"
-              title="Send"
-            >
-              ➤
-            </button>
-          </div>
-
-          {/* Finish按钮 */}
-          {showFinish && (
-            <button
-              onClick={onFinish}
-              disabled={isFinishing}
-              className={`flex-shrink-0 px-4 py-2 rounded-lg text-sm transition ${
-                isFinishing
-                  ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
-                  : 'bg-gray-300 hover:bg-gray-400'
-              }`}
-              title="Finish this interview"
-            >
-              {isFinishing ? 'Generating...' : 'Finish'}
-            </button>
-          )}
-        </div>
+    <div className="flex h-screen">
+      <Sidebar
+        onNewChat={() => window.location.href = '/'}
+        onSelectCategory={(cat) => console.log('Category selected:', cat)}
+        onSelectRecentChat={(title) => console.log('Chat selected:', title)}
+      />
+      <div className="flex flex-col flex-1 bg-white">
+        <ChatWindow messages={messages} />
+        <InputPanel
+          value={input}
+          onChange={setInput}
+          onSend={(text, file) => handleSend(text, file)} 
+          onUpload={(file) => handleSend(undefined, file)} 
+          onFinish={handleFinish}
+          showFinish={true}
+          isFinishing={saving}
+        />
       </div>
     </div>
   );
-};
-
-export default InputPanel;
+}
