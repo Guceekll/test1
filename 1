@@ -1,189 +1,172 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import os
-from dotenv import load_dotenv
-from typing import Dict
-from uuid import uuid4
-from datetime import datetime
+## AI Webアプリ知能性能・機能テスト詳細報告書
 
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.chat_history import InMemoryChatMessageHistory
-from langchain_core.runnables import RunnableWithMessageHistory
+**プロジェクト名**：Domain-Expert Agent (DXA) Platform
+**テスト日**：2025年7月15日
+**テスト担当者**：\[あなたの名前]
+**テスト種別**：機能テスト + 知能性能評価
 
-from session_utils import (
-    user_might_want_to_end,
-    has_repeated_answers,
-    user_gave_blank_responses,
-)
-from session_storage import save_session_to_json
-from models import SessionData, ChatMessage
-from openai import OpenAI
+---
 
-load_dotenv()
+### 1️⃣ Specialist Agent 知能・機能テスト
 
-app = FastAPI()
+**テスト目的**：
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+* Specialist Agent が専門分野の知識を正しく理解し、期待通りの回答ができるかを検証
 
-store: Dict[str, Dict[str, object]] = {}
+**テスト結果・所見**：
 
-class ChatRequest(BaseModel):
-    message: str
+* ✅ 基本的な知識に関する質問には良好に回答、正確で論理的な説明
+* ⚠️ 一定の構造化分析ができるものの、推論の深さに欠け、表面的な助言に留まる傾向
+* ❌ 複雑な推論や多層的な分析が求められる場合は安定せず、曖昧な回答や論理の飛躍が見られる
 
-class ChatResponse(BaseModel):
-    reply: str
-    show_end_prompt: bool = False
+**結論**：
 
-class EndSessionRequest(BaseModel):
-    user_id: str
+* Specialist Agent は単一分野の基本的な質問には適している
+* 深い分析や推論を要する課題では、さらなる性能向上が必要
 
-llm = ChatOpenAI(
-    model="gpt-4o-mini",
-    temperature=0.7,
-    openai_api_key=os.getenv("OPENAI_API_KEY"),
-)
+**提案**：
 
-prompt = ChatPromptTemplate.from_messages([
-    ("system", "你是一个专业的半导体设备故障采访助手。请一步步引导用户描述问题现象、出现时机、相关操作和可能原因。"),
-    MessagesPlaceholder(variable_name="messages"),
-])
+* Specialist Agent のコンテキスト理解と推論力を強化
+* 論理構造と詳細の深みを持った出力の最適化
 
-chain = prompt | llm
+---
 
-chain_with_history = RunnableWithMessageHistory(
-    chain,
-    lambda session_id: store.setdefault(session_id, {
-        "history": InMemoryChatMessageHistory(),
-        "asked_end": False,
-        "answer_log": [],
-        "user_inputs": [],
-        "user_id": None,
-        "start_time": datetime.utcnow(),
-    })["history"],
-    input_messages_key="input",
-    history_messages_key="messages"
-)
+### 2️⃣ Data Analyst Agent 機能・知能テスト
 
-@app.post("/chat/{session_id}", response_model=ChatResponse)
-async def chat(session_id: str, req: ChatRequest):
-    if session_id not in store:
-        store[session_id] = {
-            "history": InMemoryChatMessageHistory(),
-            "asked_end": False,
-            "answer_log": [],
-            "user_inputs": [],
-            "user_id": None,
-            "start_time": datetime.utcnow(),
-        }
+**テスト目的**：
 
-    session = store[session_id]
-    asked_end = session["asked_end"]
-    answer_log = session["answer_log"]
-    user_inputs = session["user_inputs"]
+* Data Analyst Agent のデータ理解力と異常検出・分析能力の検証
 
-    user_inputs.append(req.message.strip())
-    if len(user_inputs) > 3:
-        user_inputs.pop(0)
+**テスト結果・所見**：
 
-    if not asked_end and user_might_want_to_end(req.message):
-        session["asked_end"] = True
-        return ChatResponse(reply="看起来您可能想结束采访，请问是否还有其他问题要补充？", show_end_prompt=True)
+* ❌ 定義した無効データ（例：列全体が同一数値）の検出に失敗
+* ⚠️ データ分析系の質問では表面的な回答にとどまり、深い洞察や有益な結論が得られない
 
-    if not asked_end and user_gave_blank_responses(user_inputs):
-        session["asked_end"] = True
-        return ChatResponse(reply="您好像暂时没有更多补充，如果需要，我们可以结束这次采访。", show_end_prompt=True)
+**結論**：
 
-    response = await chain_with_history.ainvoke(
-        {"input": req.message},
-        config={"configurable": {"session_id": session_id}},
-    )
-    answer_text = response.content.strip()
-    answer_log.append(answer_text)
+* データ分析能力が不十分で、異常検出機能も期待に達していない
 
-    if not asked_end and has_repeated_answers(answer_log):
-        session["asked_end"] = True
-        return ChatResponse(reply="我注意到我们有些回答已经重复多次，请问是否需要结束本次采访？", show_end_prompt=True)
+**提案**：
 
-    return ChatResponse(reply=answer_text)
+* 異常検出アルゴリズムとパターン認識能力の向上
+* データドリブン型の分析と結論生成モジュールの強化
 
-@app.post("/end_session/{session_id}")
-def end_session(session_id: str, req: EndSessionRequest):
-    if session_id not in store:
-        raise HTTPException(status_code=404, detail="Session not found")
+---
 
-    session = store[session_id]
-    session["user_id"] = req.user_id
+### 3️⃣ Coordinator Agent 調整・情報統合能力テスト
 
-    messages = session["history"].messages
-    full_chat = "\n".join([f"{m.type}: {m.content}" for m in messages])
+**テスト目的**：
 
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+* Coordinator Agent が Specialist Agent および Data Analyst Agent を適切に調整・指揮し、タスク分配・結果統合ができるかを検証
+* Expert Guidance 設定時の調整機能と、多数の Agent 管理時の適用性を評価
 
-    try:
-        # 生成总结
-        summary_prompt = f"请你总结以下用户与 AI 的采访对话内容，聚焦设备问题描述、排查过程和结论：\n\n{full_chat}\n\n总结："
-        summary_response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "你是一个擅长总结对话的助手。"},
-                {"role": "user", "content": summary_prompt},
-            ],
-            temperature=0.5,
-        )
-        summary = summary_response.choices[0].message.content.strip()
+**テスト結果・所見**：
 
-        # 生成标题
-        title_prompt = f"请基于以下采访内容，生成一个简洁明确的中文标题，用于表示这段采访的主题：\n\n{summary}\n\n标题："
-        title_response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "你是一个擅长命名的助手。"},
-                {"role": "user", "content": title_prompt},
-            ],
-            temperature=0.4,
-        )
-        title = title_response.choices[0].message.content.strip()
+* ❌ 調整プロセス中に情報連携が途切れ、期待通りの結果が得られない
+* ❌ 同じ質問でも Specialist Agent と Coordinator Agent で回答が異なり、調整ロジックに不整合の可能性
+* ❌ Data Analyst Agent との連携に失敗し、データ分析や異常検出が正しく行われない
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+**結論**：
 
-    chat_log = [ChatMessage(role=m.type, content=m.content) for m in messages]
+* 調整ロジックが不完全で、情報統合や出力に大きな課題あり
+* ✅ 単一の Coordinator Agent に Expert Guidance を設定した場合は、指針に従った行動制御は有効
+* ❓ 複数 Agent 管理では、Expert Guidance を個別に設定する必要があり、共通・一括管理機能がないため、運用負荷が高い
+* ❗ Expert Guidance は現状、単一 Agent 向けのカスタムガイドとして機能しており、継承性や全体適用がないことで実運用効率に影響
 
-    session_data = SessionData(
-        session_id=session_id,
-        user_id=session["user_id"] or "unknown",
-        start_time=session["start_time"],
-        end_time=datetime.utcnow(),
-        summary=summary,
-        title=title, 
-        chat_log=chat_log,
-    )
+**提案**：
 
-    path = save_session_to_json(session_data)
-    return {"message": "Session saved", "file": path, "summary": summary, "title": title}
+* タスク分解と情報伝達の透明化強化
+* 全体的な Expert Guidance テンプレート機能の開発を検討し、多 Agent 管理の設定コストを削減
+* 現状では統一された Expert Guidance を策定し、主要な Coordinator Agent に個別適用することで行動の一貫性を確保
+* 複数 Agent 協働時のコンテキスト維持と結果検証ロジックの改善
 
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
-    try:
-        os.makedirs("uploaded_files", exist_ok=True)
-        file_location = f"uploaded_files/{file.filename}"
+---
 
-        with open(file_location, "wb") as f:
-            content = await file.read()
-            f.write(content)
+### 4️⃣ 表データ分析・データクエリ能力テスト
 
-        return {
-            "message": "File uploaded successfully",
-            "filename": file.filename,
-            "saved_to": file_location
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+**テスト目的**：
+
+* Agent が表データ（CSV など）を正しく読み取り、構造化データを理解し、条件に基づいた統計・分析ができるかを検証
+
+**テスト結果・所見**：
+
+* ❌ 特定日付や条件に基づくデータ集計・クエリへの正確な回答ができない
+* ❌ 回答に架空の情報や事実と異なる内容、見当違いの内容が含まれる
+
+**結論**：
+
+* 現状の表データ処理・クエリ機能は、実業務での活用には不十分
+
+**提案**：
+
+* 構造化データの解析・条件フィルタリングロジックの強化
+* 出力結果の正確性・一貫性の向上、無関係な出力の抑制
+
+---
+
+### 5️⃣ ABLE 知識ベース Specialist Agent 機能テスト
+
+**テスト目的**：
+
+* ABLE ソフトウェア知識を基にした Specialist Agent が最適化分析、要因分析、DOE（実験計画法）を正しく実行できるかを検証
+
+**テスト結果・所見**：
+
+* ✅ DOE 機能は良好で、ABLE ソフトと同様の実験計画結果を出力
+* ❌ 最適化分析・要因分析では結果が不安定で、手順提案や Python コード例が多く、直接的な結果が得られない
+* ❗ 成功事例は非常に少なく、再現性がなく、実用性に欠ける
+
+**結論**：
+
+* DOE 機能は実用可能
+* 最適化分析・要因分析機能は期待水準に達しておらず、結果の信頼性に問題がある
+
+**提案**：
+
+* モデルトレーニングの強化、特に直接的な結果出力能力の向上
+* 手順提案・コード出力の削減、結果の正確性・有用性を向上
+
+---
+
+### 6️⃣ 知識要約・対話推進性テスト
+
+**テスト目的**：
+
+* 対話を通じて知識を正しく要約し、その要約を基に実用的な Agent を生成できるかを検証
+
+**テスト結果・所見**：
+
+* ✅ 知識要約は高い網羅性を持ち、ユーザー入力情報を効果的に整理
+* ❌ 複数回の質問が似通っており、対話の進行感がなく、冗長または終了が見えない印象を与える
+* ❓ 知識要約は主にユーザー入力の単なる「まとめ」に留まり、深い要約・汎化・推論には至っていない。生成 Agent の効果はユーザー入力の完全性に強く依存
+
+**結論**：
+
+* 知識要約は情報整理には有効だが、汎化・推論能力は不十分
+* 対話設計の改善が必要で、繰り返し質問や進行感の欠如を解消する必要
+
+**提案**：
+
+* 対話推進と要約完了を示すロジックの導入、明確な終了メカニズムの設定
+* 知識汎化トレーニングを強化し、要約後の実用効果を向上
+* 現状、生成された Agent は要約に含まれる範囲の課題対応に限定される旨をユーザーに明示
+
+---
+
+## 総合結論
+
+* ✅ 基本的な知識要約と特定タスク型 Agent 作成に一定の有用性あり
+* ⚠️ 推論能力、情報調整、データ分析、実用性の面で不足が見られる
+* ❗ 生成される Agent の実用性は、ユーザーの入力内容の完全性・正確性に強く依存
+
+---
+
+## 総合提案
+
+* **短期**：ユーザー体験の最適化、要約と対話終了機能の強化、Agent 能力範囲の明確化
+* **中期**：知識汎化、コンテキスト理解、推論能力のモデル強化
+* **長期**：意思決定支援・複数 Agent 協調機能の高度化、実業務活用に耐えるシステム設計
+
+---
+
+*本報告書は2025年7月15日時点の実テスト結果に基づき、製品改善および今後の開発指針として作成したものです。*
