@@ -7,3 +7,22 @@ plan = PlanFactory.create_default_plan(objective="Build a REST API for user sign
 
 result = executor.execute(plan, context)  # 注意：这里可能需要 async/await
 pprint(result)
+
+
+
+from dana import PlanFactory, PlanStateManager
+from pprint import pprint
+
+plan = PlanFactory.create_default_plan(objective="Data pipeline")
+
+state_manager = PlanStateManager()
+initial_state = {
+    "loaded": False,
+    "processed": False
+}
+
+state_manager.initialize_state(plan, initial_state)
+state_manager.update_state(plan, {"loaded": True})
+
+current = state_manager.get_state(plan)
+pprint(current)
