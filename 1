@@ -1,38 +1,49 @@
-1. Getting Started（基本機能）
-機能	説明
-DXAの導入 (01_introduction_to_dxa.ipynb)	Danaフレームワークの基本
-シンプルな計画実行 (02_simple_plans.ipynb)	基本的なプラン作成と実行方法
-エージェント構成 (03_agent_configuration.ipynb)	異なる設定のエージェント構築
+1. 🧠 インテリジェントなエージェントの構築
+カスタムエージェントの作成が可能
 
-🟩 2. Core Concepts（コア機能）
-機能	説明
-計画レイヤー (01_planning_layer.ipynb)	DXAの計画層の理解
-推論レイヤー (02_reasoning_layer.ipynb)	DXAの推論層の理解
-実行コンテキスト (03_execution_context.ipynb)	実行とリソースのコンテキスト管理
-エージェントの能力 (04_capabilities.ipynb)	能力の定義と使用
-リソース管理 (05_resources.ipynb)	リソースの定義と利用方法
-ツール呼び出し (06_tool_calling.ipynb)	リソースメソッドの呼び出し
-MCPリソース (07_mcp_resource.ipynb)	MCPリソースの利用方法
-スマートリソース選択 (08_smart_resource_selection.ipynb)	リソース選択戦略の最適化
+計画・推論・能力・リソースなどを柔軟に構成
 
-🟨 3. Advanced Topics（応用機能）
-機能	説明
-カスタムエージェント (01_custom_agents.ipynb)	独自のエージェントの作成方法
-高度なプランニング (02_advanced_planning.ipynb)	高度な計画立案戦略
-高度な推論 (03_advanced_reasoning.ipynb)	推論の高度化と最適化戦略
+複数のエージェント間での通信も可能（Agent-to-Agent）
 
-🟧 4. Real-World Applications（実用例）
-機能	説明
-半導体製造 (01_semiconductor_manufacturing.ipynb)	製造業への適用例
-一般製造 (02_general_manufacturing.ipynb)	他の製造業のケーススタディ
-金融応用 (03_financial_applications.ipynb)	金融業界での活用事例
+2. 📋 タスクの計画と実行
+複雑なタスクをマルチステップで計画可能
 
-🟥 5. MCP Integration Examples（MCP統合）
-機能	説明
-Web検索連携 (mcp-websearch/)	MCP WebSearchサービスと連携し、検索と要約を実行
-データベース操作 (mcp-database/)	オブジェクト指向メソッドでのDBアクセス、ユーザー状態の更新など
+計画戦略の切り替えができる（シンプル／高度）
 
-🟪 6. A2A Agents（Agent-to-Agent通信）
-機能	説明
-エージェント間通信 (a2a-agents/)	専門エージェント間でデータを共有・連携、非同期処理を統合
+タスクに応じてリソースを選択・実行
 
+3. 🔍 自動推論（Reasoning）
+入力や状況に応じて、エージェントが動的に意思決定
+
+高度な推論戦略を構築可能
+
+外部情報や履歴を使って自動的に次のアクションを決定
+
+4. 🧰 ツール・リソースの呼び出し
+エージェントはツール（関数/APIなど）を動的に呼び出せる
+
+MCPやWeb検索、データベースとの接続が可能
+
+スマートリソース選択（最適なツールの自動選択）
+
+5. 🏭 現実世界との連携
+製造業（半導体・一般製造）、金融などの実用例あり
+
+DXAフレームワークを応用して実環境の問題を解決できる
+
+6. 🔗 他システムとの統合
+MCP連携：WebSearch・Database など外部ツールと統合
+
+A2A通信：複数エージェントが非同期に連携・結果を渡し合う
+
+7. ⚙️ コンテキストと能力の管理
+実行コンテキストの初期化／後処理を自動管理
+
+能力（Capabilities）を定義し、できることを制御
+
+実行に必要な条件や環境をエージェント内で管理
+
+8. 🧪 ログ・テスト・検証機能
+内部ログ（DANA_LOGGER）で動作確認が簡単
+
+各サンプルに出力結果と検証用データを含む
