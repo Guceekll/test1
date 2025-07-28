@@ -1,28 +1,38 @@
-from dana import ExecutionContext, PlanExecutor, PlanFactory
-from pprint import pprint
+1. Getting Started（基本機能）
+機能	説明
+DXAの導入 (01_introduction_to_dxa.ipynb)	Danaフレームワークの基本
+シンプルな計画実行 (02_simple_plans.ipynb)	基本的なプラン作成と実行方法
+エージェント構成 (03_agent_configuration.ipynb)	異なる設定のエージェント構築
 
-context = ExecutionContext()
-executor = PlanExecutor()
-plan = PlanFactory.create_default_plan(objective="Build a REST API for user signup")
+🟩 2. Core Concepts（コア機能）
+機能	説明
+計画レイヤー (01_planning_layer.ipynb)	DXAの計画層の理解
+推論レイヤー (02_reasoning_layer.ipynb)	DXAの推論層の理解
+実行コンテキスト (03_execution_context.ipynb)	実行とリソースのコンテキスト管理
+エージェントの能力 (04_capabilities.ipynb)	能力の定義と使用
+リソース管理 (05_resources.ipynb)	リソースの定義と利用方法
+ツール呼び出し (06_tool_calling.ipynb)	リソースメソッドの呼び出し
+MCPリソース (07_mcp_resource.ipynb)	MCPリソースの利用方法
+スマートリソース選択 (08_smart_resource_selection.ipynb)	リソース選択戦略の最適化
 
-result = executor.execute(plan, context)  # 注意：这里可能需要 async/await
-pprint(result)
+🟨 3. Advanced Topics（応用機能）
+機能	説明
+カスタムエージェント (01_custom_agents.ipynb)	独自のエージェントの作成方法
+高度なプランニング (02_advanced_planning.ipynb)	高度な計画立案戦略
+高度な推論 (03_advanced_reasoning.ipynb)	推論の高度化と最適化戦略
 
+🟧 4. Real-World Applications（実用例）
+機能	説明
+半導体製造 (01_semiconductor_manufacturing.ipynb)	製造業への適用例
+一般製造 (02_general_manufacturing.ipynb)	他の製造業のケーススタディ
+金融応用 (03_financial_applications.ipynb)	金融業界での活用事例
 
+🟥 5. MCP Integration Examples（MCP統合）
+機能	説明
+Web検索連携 (mcp-websearch/)	MCP WebSearchサービスと連携し、検索と要約を実行
+データベース操作 (mcp-database/)	オブジェクト指向メソッドでのDBアクセス、ユーザー状態の更新など
 
-from dana import PlanFactory, PlanStateManager
-from pprint import pprint
+🟪 6. A2A Agents（Agent-to-Agent通信）
+機能	説明
+エージェント間通信 (a2a-agents/)	専門エージェント間でデータを共有・連携、非同期処理を統合
 
-plan = PlanFactory.create_default_plan(objective="Data pipeline")
-
-state_manager = PlanStateManager()
-initial_state = {
-    "loaded": False,
-    "processed": False
-}
-
-state_manager.initialize_state(plan, initial_state)
-state_manager.update_state(plan, {"loaded": True})
-
-current = state_manager.get_state(plan)
-pprint(current)
