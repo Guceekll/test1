@@ -1,0 +1,175 @@
+Dana 功能总结（简明版）
+1. Agent 特化与扩展
+
+功能定义
+让开发者为特定任务创建「专用 Agent」，并且可以通过添加新方法、API、数据源、分析模型等来扩展它的能力。
+
+功能说明
+
+可以针对不同任务（如生产流程分析、翻译、客服对话）创建不同类型的 Agent
+
+支持在现有 Agent 上添加「新功能」或「行为模式」
+
+可加入自定义分析模型（如 Chain-of-Thought 推理模型）
+
+User Case
+工厂开发一个「生产流程分析 Agent」，它能自动读取任务请求，生成分析报告，并在需要时调用定制的分析工具。
+
+图解
+
+用户 → 提出任务
+   ↓
+Agent → 分析任务 → 使用扩展模型
+   ↓
+返回诊断结果（报告/分析数据）
+
+
+代码示例（伪代码）
+
+from dana import Agent
+
+# 创建基础Agent
+agent = Agent(name="ProcessAnalyzer")
+
+# 扩展功能：接入一个诊断模型
+agent.add_resource("AnalysisModel", model="process_diagnosis_v1")
+
+# 使用Agent执行任务
+result = agent.run("分析生产流程并生成报告")
+print(result)
+
+2. 工具调用
+
+功能定义
+Agent 可以自动调用外部工具（如 API、数据库、Python 脚本），并将结果整合到任务中。
+
+功能说明
+
+Agent 能把任务转化成「调用工具的指令」
+
+自动生成 API 请求并执行
+
+不需要人工干预
+
+User Case
+用户要求「获取东京天气」，Agent 会自动调用天气 API 并返回结果。
+
+图解
+
+用户 → 请求天气
+   ↓
+Agent → 转换为 API 请求
+   ↓
+天气API → 返回天气数据
+   ↓
+Agent → 输出天气结果
+
+
+代码示例（伪代码）
+
+agent.run("获取东京的天气情况")
+# Dana 自动生成 API 请求 → 天气API → 返回结果
+
+3. 状态管理
+
+功能定义
+Agent 会保存「上下文状态」，就像一个「黑板」，记录用户历史、任务进度和中间结果。
+
+功能说明
+
+保存用户之前的输入和对话
+
+记住任务执行进度
+
+可以从过去的状态中提取信息，做出更合理的决策
+
+User Case
+当用户提问「再告诉我上次的分析结果」，Agent 可以从状态中调出之前的内容，而不是重新计算。
+
+图解
+
+状态存储器（Blackboard）
+ ├─ 用户输入历史
+ ├─ 上次任务的分析结果
+ ├─ 中间变量
+
+
+代码示例（伪代码）
+
+agent.memory.store("上次分析", "报告内容A")
+print(agent.memory.retrieve("上次分析"))
+
+4. 多 Agent 协作
+
+功能定义
+允许多个 Agent 协作完成复杂任务。可以把任务拆解，分配给不同的子 Agent。
+
+功能说明
+
+各子 Agent 负责不同的任务（如分析 / 翻译 / 生成报告）
+
+主 Agent 负责协调和合并结果
+
+类似于团队合作
+
+User Case
+在一个「市场调研项目」中，一个 Agent 负责收集数据，另一个 Agent 负责分析数据，最后一个 Agent 整理成报告。
+
+图解
+
+主Agent
+ ├─ 子AgentA（数据收集）
+ ├─ 子AgentB（数据分析）
+ └─ 子AgentC（报告生成）
+
+
+代码示例（伪代码）
+
+main_agent = Agent("Main")
+
+data_agent = Agent("DataCollector")
+analysis_agent = Agent("Analyzer")
+report_agent = Agent("Reporter")
+
+main_agent.add_subagent(data_agent)
+main_agent.add_subagent(analysis_agent)
+main_agent.add_subagent(report_agent)
+
+main_agent.run("市场调研并生成报告")
+
+5. Agent 测试
+
+功能定义
+在部署之前，可以测试 Agent 的功能，确保行为符合预期。
+
+功能说明
+
+支持使用 pytest 或内置工具做单元测试
+
+可以检查 Agent 在不同场景下是否输出正确结果
+
+避免上线后出错
+
+User Case
+在上线前，开发者测试「翻译 Agent」是否能正确翻译 10 条常见语句。
+
+图解
+
+输入测试数据 → Agent → 输出结果 → 比对预期结果 → 通过/失败
+
+
+代码示例（伪代码）
+
+def test_agent_translation():
+    result = translation_agent.run("Hello")
+    assert result == "こんにちは"
+
+
+📌 总结表格
+
+功能	定义	能做什么	User Case
+Agent 特化与扩展	为任务定制和扩展 Agent	添加新模型/方法	生产流程分析 Agent
+工具调用	自动调用 API/工具	转换任务为 API 请求	获取东京天气
+状态管理	保存上下文和历史	记住过去对话/结果	再次查询上次分析
+多 Agent 协作	多个 Agent 协作完成任务	拆分任务，协作完成	市场调研项目
+Agent 测试	部署前验证行为	自动化测试 Agent 功能	测试翻译 Agent
