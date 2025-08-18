@@ -1,256 +1,194 @@
-1.planning
- 二、这是什么功能？
-这是 Dana 框架中的一个核心组件：Planning Layer（规划层）。它是架构中的关键模块之一，专注于决策“要做什么”。
-在 Agent 系统中，Planning Layer 就像一个智能调度器，帮助智能体分析目标、制定计划、分配资源和优化执行路径。
-它将复杂目标拆解成可管理的工作流，并以智能方式组织和优化执行流程。
-Goal Analysis	分析并理解高层次目标
-🧩 Task Decomposition	拆解为可执行的小任务
-🔁 Sequencing	确定任务执行顺序
-🧠 Resource Allocation	识别并分配资源
-🔗 Dependency Mgmt	管理任务间依赖
-📈 Optimization	规划最优执行路径
-
-构建一个 AI 项目规划助手
-目标：构建一个 Agent，帮助用户将“开发一个推荐系统”这一高阶目标自动拆解为步骤，并安排执行顺序。
-
-
-Reasoning Layer
-该功能是 Dana 架构中的 推理层（Reasoning Layer），与规划层并列为核心组件之一。
-作用：执行规划层定义的任务，负责“如何执行”的逻辑实现
-本质：在每个计划步骤上绑定一个“推理策略”，用来运行任务、生成结果
-形式：内置策略、自定义策略、LLM 推理、外部工具调用、组合策略等
-
-任务执行	用指定算法策略执行具体任务
-✅ 推理逻辑封装	支持链式推理、OODA 等策略
-✅ LLM 推理	可调用 GPT-4、Claude-3 等模型
-✅ 自定义策略	用 Python 自定义执行逻辑
-✅ 外部工具调用	利用 Python 解释器或分析工具完成任务
-✅ 策略组合	合并多个策略实现复杂推理路径
-✅ 与规划结合	可绑定至 PlanStep，配合规划层执行完整计划
-User Case 示例（来自截图）
-示例 1：制造数据分析。使用链式思维模式推理识别模式
-
-示例 2：多策略制造优化综合多个策略，优化生产参数
-
-
-Execution Context in Dana
-它不是某个独立的智能体或算法，而是一个全局运行环境控制器，用于协调、共享、追踪、管理以下内容：状态管理	追踪智能体任务进度与环境状态
-资源管理	管理任务需要调用的工具、数据库等
-层协调	使得 Planning 与 Reasoning 层协同运行
-上下文共享	在多个 PlanStep 之间共享结果与变量
-生命周期管理	注册/清理资源，维持执行完整性
-
-管理跨层状态	跟踪任务进度与环境限制条件
-✅ 共享数据与资源	不同任务共享数据库、分析工具、模型等
-✅ 生命周期控制	初始化与注销工具资源
-✅ 计划-推理层桥接	支持计划与推理逻辑配合工作
-✅ 全局配置支持	允许配置环境变量、日志等运行参数
-
-跟踪智能体分析状态
-作用：记录当前分析进度，并保存最后执行行为
-管理制造数据库资源
-作用：注册制造数据库以供任务使用，便于跨任务复用
-
-
-Capabilities
-Dana 的能力系统（Capabilities）是一个用于描述、组织、组合与复用Agent 能力模块的机制。
-它像是为每个智能体定义了功能插件，帮助你：
-明确规划阶段能调用什么能力
-在执行阶段如何实现任务功能
-✅ 能力定义	使用 BaseCapability 定义功能模块
-✅ 自定义组合	支持多个能力组合为复合能力（如分析+可视化）
-✅ 能力注册	注册至 ExecutionContext 供规划/推理调用
-✅ 与 Plan 绑定	在 PlanStep 中绑定具体能力
-✅ 能力更新	创建能力的新版本并更改实现
-✅ 测试验证	
-
-组合数据分析与图表绘制
-先执行数据分析
-再根据分析结果生成图表（如折线图）
-
-
-Memory Subsystem
-该功能是 Dana 的记忆子系统，为 Agent 提供结构化、分层级的记忆能力，并支持信息衰减机制。本系统可视作 Agent 的“记忆脑”，用于实现：
-
-临时状态追踪（短期）
-
-跨任务经验积累（长期）
-
-核心信息保留（永久）
-管理记忆生命周期	自动控制信息保留时间与重要性
-✅ 多记忆等级	根据任务类型使用不同记忆层
-✅ 支持 importance 控制	记忆存储支持重要性打分机制
-✅ 提供 decay 参数	支持信息衰减与半衰期管理
-✅ 可集成至 Agent	与智能体融合，贯穿对话与任务上下文
-
-制造信息分层保存
-分别根据信息时效性与关键性，存入不同记忆层。
-
-Resources 
-Dana 的资源系统是一套用于管理、协调智能体在“规划层（Planning）”和“推理层（Reasoning）”中使用的资源的机制。它支持多种资源类型、灵活的配置、生命周期管理和资源池优化等功能。
-
-资源类型支持	支持 LLM、API、数据库、自定义资源类型 并且对多类资源进行统一配置与调用；
-生命周期管理	创建 ExecutionContext 并注册资源，在规划与推理时调用资源
-资源池与优化	支持创建资源池、限制并发资源数量，提高资源利用效率
-
-User Case 示例（完全基于截图推导）
-📌 用户需求场景：一个用户希望构建一个可以生成计划并分析数据的 Agent 系统，其中需要调用多个 LLM 和数据库资源。
-
-Tool Calling
-它允许大语言模型（LLMs）以结构化的方式调用 Python 中定义的资源方法，从而在任务执行中嵌入外部功能（如分析、可视化等）。
-
-Tool Calling 是连接 LLM 与资源执行能力的桥梁，使智能体不仅能“思考”，还能“动手”执行具体操作。
-
-功能模块	功能描述
-🧩 方法注册	使用 @tool_callable 装饰器将资源方法暴露为 LLM 可调用工具
-📦 参数结构	使用 Pydantic 模型定义工具的参数，并通过 ToolSchema 结构化管理
-🧪 输入验证	在方法内部验证参数合法性，例如检查数据是否为空、方法类型是否合法
-🛠️ 错误处理	抛出结构化错误（ToolError），向 LLM 提供可解释反馈
-📋 计划调用	在 Plan 和 PlanStep 中使用工具，并传入参数执行
-✅ 自动测试	使用 pytest 对工具方法进行自动化测试，确保其功能正确
-
-
-AI 驱动的数据分析与可视化系统
-用户需求：希望通过 LLM 调用后端分析和可视化方法，自动完成数据分析任务并生成图表。
-
-MCPResource
-这是 Dana 框架中用于将外部工具和服务集成进智能体系统的功能模块：MCPResource。
-它提供了一个通用协议接口（Model Context Protocol, MCP），使得不同服务（如 HTTP API、本地可执行程序等）能被当作“资源”动态引入，并被智能体在推理和规划中灵活调用。
-
-MCP 资源注册	将外部服务以资源形式接入 Dana 系统
-🌐 多种传输支持	支持 HTTP 或 STDIO 的通信方式
-🔍 工具自动发现	可自动扫描外部资源中提供的工具
-🧠 与 Plan 集成	将发现的工具嵌入到智能体的执行计划中
-⚠️ 错误处理机制	自定义错误处理（重试、超时、参数校验）
-🧪 可测试性	通过 pytest 框架测试外部资源调用逻辑是否正确
-
-集成外部推荐系统 API 到 Dana Agent 中
-目标：构建一个智能 Agent，能通过调用外部 HTTP 接口，实现“生成推荐列表”的功能，并可动态发现可用的工具方法。
-
-Smart Resource
-这是 Dana 中的“智能资源选择与编排”系统，允许 Agent 根据任务需求自动选择合适的计算资源（如模型、分析模块、外部服务等），并协调它们的使用流程。
-这是构建高效多任务处理智能体的关键机制。
-
-Resource Selection	在规划与推理阶段，根据任务内容自动选择最合适的资源
-🔍 Capability Scoring	基于资源能力（如分析/预测/可视化）打分并匹配
-🧠 Strategy Customization	用户可以自定义资源选择策略
-🔗 Resource Orchestration	编排多个资源的使用流程，实现串行/并行执行
-🧪 Testing Support	提供完整测试机制验证资源选择是否正确自动数据分析资源选择
-目标：设计一个智能 Agent，根据任务内容自动调用适合的资源执行分析任务。
-
-
-State Management
-这是 Dana Agent 系统的核心功能模块之一：状态管理（State Management）。
-它为 agent 提供一个贯穿生命周期的“记忆中枢”（Blackboard），用于记录、共享与更新任务执行过程中的各种信息。上下文保留	保持 agent 在多轮对话或任务中的连续性
-通过黑板（Blackboard）机制，可以在 agent 内部或组件之间共享任务相关的数据和中间结果，从而支持复杂推理和灵活行为控制。
-
-组件通信	规划层与推理层等不同组件间共享信息
-决策支持	基于状态信息做出更合理决策
-调试排错	检查状态以分析 agent 行为问题
-
-
-在一个智能客服 agent 中，可以使用 state 保存用户意图、请求参数或历史响应，用于跨轮调用与推理。
-
-
-功能一：工具调用与封装（Tool Calling & Wrapping）
-功能定义：
-Dana 支持将函数、OpenAPI 接口、系统命令等转化为 Agent 可调用的工具，实现自动化调用能力。
-
-能力描述：
-
-封装任意 Python 函数为工具（如 tool_from_function）
-
-将 OpenAPI 规范转为工具对象（如 tool_from_openapi_spec）
-
-支持异步执行和返回结果结构化
-
-工具参数可由 Agent 自动生成（例如根据上下文推理自动构造 API 请求）
-
-使用方式：
-通过 Dana 内置函数如 tool_from_function, tool_from_openapi_spec, tool_from_langchain 封装工具，并注册给 Agent 使用。
-
-user case 示例：
-用户想让 Agent 执行一个“天气查询”任务，只需提供一个天气 API 的 OpenAPI 文件，Dana 会将其转为可用工具，Agent 自动根据用户输入构造请求并返回结果。
-
-✅ 功能二：状态管理（Agent State Management）
-功能定义：
-Dana 中的每个 Agent 拥有一个内部状态（State），作为信息共享的“黑板”，用于在生命周期中保存和传播信息。
-
-能力描述：
-
-支持私有状态（仅供当前 Agent 使用）与共享状态（多个 Agent 或系统模块共享）
-
-用于保留上下文（Context）、组件通信、决策支持和调试分析
-
-提供统一访问接口，简化状态读取与写入
-
-状态可保存中间变量、请求参数、推理结果等内容
-
-使用方式：
-通过 agent.state["key"] = value 和 agent.state.get("key") 等接口设置和读取状态信息。
-
-user case 示例：
-一个智能客服 Agent 在与用户多轮对话中持续记录“用户请求 ID”和“前一轮回答”。当需要做上下文推理时，Agent 自动从状态中调出历史信息辅助决策。
-
-✅ 功能三：Agent 特化与扩展（Agent Specialization & Extension）
-功能定义：
-Dana 支持创建自定义 Agent，通过添加新能力、整合资源、配置行为以适应特定任务和领域。
-
-能力描述：
-
-可创建针对某类任务的“专用 Agent”
-
-支持引入额外资源（如模型、API、数据库等）扩展功能
-
-可配置 Agent 行为策略（如 Chain-of-Thought 策略）
-
-提供 ExtendedAgent, CustomAgent 等类用于继承与扩展
-
-使用方式：
-通过继承 Agent 基类自定义逻辑，传入 extended_resources 参数定义能力范围，并实现 execute_task 或 plan 等方法。
-
-user case 示例：
-制造企业希望创建一个能“分析生产流程”的智能 Agent。开发者基于 Dana 扩展了一个 Agent，添加了一个自定义资源（分析模型），使其能处理结构化任务请求并给出诊断报告。
-
-✅ 功能四：多 Agent 组合与协调（Multi-Agent Composition）
-功能定义：
-Dana 允许将多个具备不同能力的 Agent 组合成一个“复合智能体”，用于分任务执行与协作。
-
-能力描述：
-
-可定义多个专用子 Agent
-
-支持自动任务分解为子任务
-
-每个子任务根据其特性路由给合适 Agent 执行
-
-自动汇总所有子任务结果
-
-使用方式：
-创建一个继承自 Agent 的组合类（如 ComposedAgent），定义 decompose_task() 和 select_agent() 方法，实现任务拆解与路由逻辑。
-
-user case 示例：
-一个项目管理 Agent 被要求“优化某流程并给出报告”，系统将任务拆分为“分析”、“优化”两个子任务，分别分派给“分析 Agent”与“优化 Agent”处理，最终汇总为一份输出报告返回给用户。
-
-✅ 功能五：自定义 Agent 测试（Custom Agent Testing）
-功能定义：
-Dana 提供系统化测试方法，验证自定义 Agent 在规划、推理、执行等环节的功能是否正确。
-
-能力描述：
-
-支持使用 pytest 进行自动化测试
-
-可测试 Agent 的 planning、reasoning、task execution 等函数行为
-
-提供断言机制确保行为符合预期
-
-适用于开发过程中持续集成或功能验证场景
-
-使用方式：
-使用 Python 编写测试函数，如 test_custom_agent()，在测试函数中通过断言校验 Agent 返回值是否包含期望字段或行为。
-
-user case 示例：
-开发者为一个 Agent 添加了新的“数据分析”功能后，编写测试用例确保它能正确返回 extended_analysis 字段，避免部署后功能异常。
-
-
-
+OPENAI_API_KEY=你的key
+OPENAI_BASE_URL=http://你的网关地址:端口/v1
+FASTAGENT_DEFAULT_MODEL=openai.你的模型名
+
+
+
+# backend/main.py  —— 仅用 .env 配置，Fast-Agent 面向对象最简版
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from dotenv import load_dotenv
+from typing import Dict, List, Any
+from datetime import datetime
+import os
+
+from session_utils import (
+    user_might_want_to_end,
+    has_repeated_answers,
+    user_gave_blank_responses,
+)
+from session_storage import save_session_to_json
+from models import SessionData, ChatMessage
+
+# ✅ 只用 Agent/AgentConfig（模型信息走 .env）
+from mcp_agent.agents.agent import Agent, AgentConfig
+
+# ---- 加载 .env，供 Fast-Agent 读取 ----
+# 需要的环境变量：
+#   OPENAI_API_KEY            # 你的网关/代理的 API Key
+#   OPENAI_BASE_URL           # 你的 OpenAI 兼容网关，如 http://host:port/v1
+#   FASTAGENT_DEFAULT_MODEL   # 如 openai.my_internal_model
+load_dotenv()
+
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---- 提示词（可在 .env 覆盖）----
+SYSTEM_PROMPT_MAIN = os.getenv(
+    "SYSTEM_PROMPT_MAIN",
+    "你是一个专业的半导体设备故障采访助手。请一步步引导用户描述问题现象、出现时机、相关操作和可能原因。"
+)
+SYSTEM_PROMPT_SUMMARY = os.getenv("SYSTEM_PROMPT_SUMMARY", "你是一个擅长总结对话的助手。")
+SYSTEM_PROMPT_TITLE = os.getenv("SYSTEM_PROMPT_TITLE", "你是一个擅长命名的助手。")
+
+# ---- 会话内存（我们自己维护）----
+store: Dict[str, Dict[str, Any]] = {}
+
+class ChatRequest(BaseModel):
+    message: str
+
+class ChatResponse(BaseModel):
+    reply: str
+    show_end_prompt: bool = False
+
+class EndSessionRequest(BaseModel):
+    user_id: str
+
+# ---- 极简工厂：只传 name 和 system，模型用 FASTAGENT_DEFAULT_MODEL（来自 .env）----
+def make_agent(name: str, system_prompt: str) -> Agent:
+    # 不传 llm/model，Fast-Agent 会从环境变量 FASTAGENT_DEFAULT_MODEL 读取默认模型
+    return Agent(config=AgentConfig(name=name, system=system_prompt))
+
+chat_agent    = make_agent("interview_agent", SYSTEM_PROMPT_MAIN)
+summary_agent = make_agent("summary_agent",   SYSTEM_PROMPT_SUMMARY)
+title_agent   = make_agent("title_agent",     SYSTEM_PROMPT_TITLE)
+
+# ---- 工具函数：把 messages 压成纯文本，统一用 agent.run(text) ----
+def build_messages(history: List[Dict[str, str]], user_input: str | None, system_prompt: str) -> List[Dict[str, str]]:
+    msgs: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
+    for m in history:
+        if m["role"] in ("user", "assistant"):
+            msgs.append(m)
+    if user_input is not None:
+        msgs.append({"role": "user", "content": user_input})
+    return msgs
+
+def run_agent(agent: Agent, messages: List[Dict[str, str]]) -> str:
+    prompt = "\n".join(f"{m['role']}: {m['content']}" for m in messages)
+    out = agent.run(prompt)  # ✅ 最稳：统一走 run(text)
+    if isinstance(out, dict):
+        for k in ("content", "text", "message", "output"):
+            if k in out and out[k]:
+                return str(out[k]).strip()
+        return str(out).strip()
+    return str(getattr(out, "text", out)).strip()
+
+# ---- 路由 ----
+@app.post("/chat/{session_id}", response_model=ChatResponse)
+async def chat(session_id: str, req: ChatRequest):
+    if session_id not in store:
+        store[session_id] = {
+            "history": [],
+            "asked_end": False,
+            "answer_log": [],
+            "user_inputs": [],
+            "user_id": None,
+            "start_time": datetime.utcnow(),
+        }
+
+    session = store[session_id]
+    history: List[Dict[str, str]] = session["history"]
+    asked_end = session["asked_end"]
+    answer_log: List[str] = session["answer_log"]
+    user_inputs: List[str] = session["user_inputs"]
+
+    user_inputs.append(req.message.strip())
+    if len(user_inputs) > 3:
+        user_inputs.pop(0)
+
+    if not asked_end and user_might_want_to_end(req.message):
+        session["asked_end"] = True
+        return ChatResponse(reply="看起来您可能想结束采访，请问是否还有其他问题要补充？", show_end_prompt=True)
+
+    if not asked_end and user_gave_blank_responses(user_inputs):
+        session["asked_end"] = True
+        return ChatResponse(reply="您好像暂时没有更多补充，如果需要，我们可以结束这次采访。", show_end_prompt=True)
+
+    messages = build_messages(history, req.message, SYSTEM_PROMPT_MAIN)
+    try:
+        answer_text = run_agent(chat_agent, messages)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Fast-Agent 调用失败: {e}")
+
+    history.append({"role": "user", "content": req.message})
+    history.append({"role": "assistant", "content": answer_text})
+
+    answer_log.append(answer_text)
+    if not asked_end and has_repeated_answers(answer_log):
+        session["asked_end"] = True
+        return ChatResponse(reply="我注意到我们有些回答已经重复多次，请问是否需要结束本次采访？", show_end_prompt=True)
+
+    return ChatResponse(reply=answer_text)
+
+@app.post("/end_session/{session_id}")
+def end_session(session_id: str, req: EndSessionRequest):
+    if session_id not in store:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session = store[session_id]
+    session["user_id"] = req.user_id
+
+    messages = session["history"]
+    full_chat = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
+
+    try:
+        # 总结
+        sum_msgs = [
+            {"role": "system", "content": SYSTEM_PROMPT_SUMMARY},
+            {"role": "user", "content": f"请你总结以下用户与 AI 的采访对话内容，聚焦设备问题描述、排查过程和结论：\n\n{full_chat}\n\n总结："}
+        ]
+        summary = run_agent(summary_agent, sum_msgs)
+
+        # 标题
+        title_msgs = [
+            {"role": "system", "content": SYSTEM_PROMPT_TITLE},
+            {"role": "user", "content": f"请基于以下采访内容，生成一个简洁明确的中文标题：\n\n{summary}\n\n标题："}
+        ]
+        title = run_agent(title_agent, title_msgs)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Fast-Agent 总结/标题失败: {e}")
+
+    chat_log = [ChatMessage(role=m["role"], content=m["content"]) for m in messages]
+
+    session_data = SessionData(
+        session_id=session_id,
+        user_id=session["user_id"] or "unknown",
+        start_time=session["start_time"],
+        end_time=datetime.utcnow(),
+        summary=summary,
+        title=title,
+        chat_log=chat_log,
+    )
+
+    path = save_session_to_json(session_data)
+    return {"message": "Session saved", "file": path, "summary": summary, "title": title}
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    try:
+        os.makedirs("uploaded_files", exist_ok=True)
+        file_location = f"uploaded_files/{file.filename}"
+        with open(file_location, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        return {"message": "File uploaded successfully", "filename": file.filename, "saved_to": file_location}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
