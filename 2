@@ -39,6 +39,161 @@ class ChatResponse(BaseModel):
 class EndSessionRequest(BaseModel):
     user_id: str
 
+@app.post("/chat/{session_id}", response_model=ChatResponse)
+async def chat(session_id: str, req: ChatRequest):
+    if session_id not in store:
+        store[session_id] = {
+            "history": [],
+            "asked_end": False,
+            "answer_log": [],
+            "user_inputs": [],
+            "user_id": None,
+            "start_time": datetime.utcnow(),
+        }
+
+    session = store[session_id]
+    history: List[Dict[str, str]] = session["history"]
+    answer_log: List[str] = session["answer_log"]
+    user_inputs: List[str] = session["user_inputs"]
+
+    # —— 统一清洗 —— #
+    raw = req.message if req.message is not None else ""
+    msg = raw.strip()
+    msg_lc = msg.lower()
+
+    # 维护一个更稳妥的窗口（例如 5 条）
+    user_inputs.append(msg)
+    if len(user_inputs) > 5:
+        user_inputs.pop(0)
+
+    # 1) 空输入早退（更激进一些：把“纯标点/表情”也当空）
+    if not session["asked_end"]:
+        if (msg == "") or user_gave_blank_responses(user_inputs):
+            session["asked_end"] = True
+            return ChatResponse(
+                reply="您好像暂时没有更多补充，如果需要，我们可以结束这次采访。",
+                show_end_prompt=True,
+            )
+
+    # 2) 可能想结束（用小写的 msg_lc，便于命中关键词）
+    if not session["asked_end"] and user_might_want_to_end(msg_lc):
+        session["asked_end"] = True
+        return ChatResponse(
+            reply="看起来您可能想结束采访，请问是否还有其他问题要补充？",
+            show_end_prompt=True,
+        )
+
+    # —— 调用 agent —— #
+    try:
+        async with fast.run() as agent:
+            answer_text = str(await agent.interview_agent(msg)).strip()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"fast-agent 调用失败: {e}")
+
+    history.append({"role": "user", "content": msg})
+    history.append({"role": "assistant", "content": answer_text})
+
+    # 统一标准化后再入库，利于相似度判定
+    norm_ans = " ".join(answer_text.lower().split())
+    answer_log.append(norm_ans)
+
+    # 3) 重复回答检测（仍然放在 agent 调用之后）
+    if not session["asked_end"] and has_repeated_answers(answer_log):
+        session["asked_end"] = True
+        return ChatResponse(
+            reply="我注意到我们有些回答已经重复多次，请问是否需要结束本次采访？",
+            show_end_prompt=True,
+        )
+
+    return ChatResponse(reply=answer_text)
+
+
+@app.post("/end_session/{session_id}")
+async def end_session(session_id: str, req: EndSessionRequest):
+    if session_id not in store:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session = store[session_id]
+    session["user_id"] = req.user_id
+    history: List[Dict[str, str]] = session["history"]
+
+    full_chat = "\n".join(
+        f"{'用户' if m['role']=='user' else '助手'}: {m['content']}" for m in history
+    )
+
+    try:
+        async with fast.run() as agent:
+            summary = str(await agent.summary_agent(full_chat)).strip()
+            title = str(await agent.title_agent(summary)).strip()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"fast-agent 总结/标题失败: {e}")
+
+    chat_log = [ChatMessage(role=m["role"], content=m["content"]) for m in history]
+    session_data = SessionData(
+        session_id=session_id,
+        user_id=session["user_id"] or "unknown",
+        start_time=session["start_time"],
+        end_time=datetime.utcnow(),
+        summary=summary,
+        title=title,
+        chat_log=chat_log,
+    )
+
+    path = save_session_to_json(session_data)
+    return {"message": "Session saved", "file": path, "summary": summary, "title": title}
+
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    try:
+        os.makedirs("uploaded_files", exist_ok=True)
+        file_location = f"uploaded_files/{file.filename}"
+        with open(file_location, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        return {"message": "File uploaded successfully", "filename": file.filename, "saved_to": file_location}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Dict, List, Any
+from datetime import datetime
+import os
+
+from dotenv import load_dotenv
+load_dotenv()
+
+from agent_app import fast  # 引入你刚定义的 fast 实例和三个 agent
+
+from session_utils import (
+    user_might_want_to_end,
+    has_repeated_answers,
+    user_gave_blank_responses,
+)
+from session_storage import save_session_to_json
+from models import SessionData, ChatMessage
+
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+store: Dict[str, Dict[str, Any]] = {}
+
+class ChatRequest(BaseModel):
+    message: str
+
+class ChatResponse(BaseModel):
+    reply: str
+    show_end_prompt: bool = False
+
+class EndSessionRequest(BaseModel):
+    user_id: str
 
 @app.post("/chat/{session_id}", response_model=ChatResponse)
 async def chat(session_id: str, req: ChatRequest):
@@ -54,35 +209,57 @@ async def chat(session_id: str, req: ChatRequest):
 
     session = store[session_id]
     history: List[Dict[str, str]] = session["history"]
-    asked_end: bool = session["asked_end"]
     answer_log: List[str] = session["answer_log"]
     user_inputs: List[str] = session["user_inputs"]
 
-    user_inputs.append(req.message.strip())
-    if len(user_inputs) > 3:
+    # —— 统一清洗 —— #
+    raw = req.message if req.message is not None else ""
+    msg = raw.strip()
+    msg_lc = msg.lower()
+
+    # 维护一个更稳妥的窗口（例如 5 条）
+    user_inputs.append(msg)
+    if len(user_inputs) > 5:
         user_inputs.pop(0)
 
-    if not asked_end and user_might_want_to_end(req.message):
-        session["asked_end"] = True
-        return ChatResponse(reply="看起来您可能想结束采访，请问是否还有其他问题要补充？", show_end_prompt=True)
+    # 1) 空输入早退（更激进一些：把“纯标点/表情”也当空）
+    if not session["asked_end"]:
+        if (msg == "") or user_gave_blank_responses(user_inputs):
+            session["asked_end"] = True
+            return ChatResponse(
+                reply="您好像暂时没有更多补充，如果需要，我们可以结束这次采访。",
+                show_end_prompt=True,
+            )
 
-    if not asked_end and user_gave_blank_responses(user_inputs):
+    # 2) 可能想结束（用小写的 msg_lc，便于命中关键词）
+    if not session["asked_end"] and user_might_want_to_end(msg_lc):
         session["asked_end"] = True
-        return ChatResponse(reply="您好像暂时没有更多补充，如果需要，我们可以结束这次采访。", show_end_prompt=True)
+        return ChatResponse(
+            reply="看起来您可能想结束采访，请问是否还有其他问题要补充？",
+            show_end_prompt=True,
+        )
 
+    # —— 调用 agent —— #
     try:
         async with fast.run() as agent:
-            answer_text = str(await agent.interview_agent(req.message)).strip()
+            answer_text = str(await agent.interview_agent(msg)).strip()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"fast-agent 调用失败: {e}")
 
-    history.append({"role": "user", "content": req.message})
+    history.append({"role": "user", "content": msg})
     history.append({"role": "assistant", "content": answer_text})
 
-    answer_log.append(answer_text)
-    if not asked_end and has_repeated_answers(answer_log):
+    # 统一标准化后再入库，利于相似度判定
+    norm_ans = " ".join(answer_text.lower().split())
+    answer_log.append(norm_ans)
+
+    # 3) 重复回答检测（仍然放在 agent 调用之后）
+    if not session["asked_end"] and has_repeated_answers(answer_log):
         session["asked_end"] = True
-        return ChatResponse(reply="我注意到我们有些回答已经重复多次，请问是否需要结束本次采访？", show_end_prompt=True)
+        return ChatResponse(
+            reply="我注意到我们有些回答已经重复多次，请问是否需要结束本次采访？",
+            show_end_prompt=True,
+        )
 
     return ChatResponse(reply=answer_text)
 
