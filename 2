@@ -1,1 +1,106 @@
 
+import os
+import json
+from datetime import datetime, timezone
+from typing import Any, Dict
+
+from models import SessionData  # your existing Pydantic model
+
+
+# --- helpers ---------------------------------------------------------------
+
+def _to_iso8601(dt: datetime) -> str:
+    """
+    Return ISO-8601 string. If dt has no tzinfo, treat it as UTC.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _map_role_to_type(role: str) -> str:
+    """
+    Infer LAD 'type' from role:
+      assistant -> question
+      user      -> answer
+    """
+    role = (role or "").lower()
+    if role == "assistant":
+        return "question"
+    if role == "user":
+        return "answer"
+    # fallback if you ever log other roles
+    return "message"
+
+
+def _session_to_lad(session: SessionData) -> Dict[str, Any]:
+    """
+    Convert your SessionData to a minimal LAD payload.
+    This ONLY uses fields you've shown are available.
+    """
+    # Build turns from your chat_log
+    turns = []
+    for msg in getattr(session, "chat_log", []) or []:
+        turns.append({
+            "role": msg.get("role", "user"),
+            "type": _map_role_to_type(msg.get("role")),
+            "content": msg.get("content", "")
+        })
+
+    lad: Dict[str, Any] = {
+        "lad_version": "0.1",
+        "session_id": str(getattr(session, "session_id", "")),
+        # If you have a topic field, put it here; otherwise title is a good stand-in.
+        "topic": getattr(session, "title", None) or "general",
+        "turns": turns,
+        "meta": {
+            # Optional convenience metadata that many LAD consumers expect
+            "user_id": getattr(session, "user_id", None),
+            "title": getattr(session, "title", None),
+            "summary": getattr(session, "summary", None),
+            "created_at": _to_iso8601(getattr(session, "start_time", None)),
+            "finished_at": _to_iso8601(getattr(session, "end_time", None)),
+            # You can add more later: model name, app version, language, pack/style, etc.
+        }
+    }
+    return lad
+
+
+# --- writer ----------------------------------------------------------------
+
+def save_session_to_lad(session: SessionData) -> str:
+    """
+    Save the current session as a LAD file (JSON).
+    Output path example:
+      lad/lad_2025-08-26T12-35-41Z_ff694d97-....lad.json
+    """
+    os.makedirs("lad", exist_ok=True)
+
+    # Prefer end_time for filename; fallback to now
+    end_dt = getattr(session, "end_time", None) or datetime.now(timezone.utc)
+    ts_for_name = _to_iso8601(end_dt).replace(":", "-")
+
+    session_id = str(getattr(session, "session_id", "no-session-id"))
+    filename = f"lad/lad_{ts_for_name}_{session_id}.lad.json"
+
+    lad_payload = _session_to_lad(session)
+
+    try:
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(lad_payload, f, ensure_ascii=False, indent=2)
+        print("[save_session_to_lad] Wrote:", os.path.abspath(filename))
+    except Exception as e:
+        print("[save_session_to_lad] ❌ Failed to write LAD:", str(e))
+        # Optional: dump a minimal debug copy next to it
+        try:
+            debug_name = f"{filename}.debug"
+            with open(debug_name, "w", encoding="utf-8") as f:
+                f.write(str(lad_payload)[:5000])
+            print("[save_session_to_lad] Wrote debug payload:", os.path.abspath(debug_name))
+        except Exception:
+            pass
+        raise
+
+    return filename
