@@ -1,1 +1,61 @@
 
+Capture — Domain-Agnostic AI Interview Assistant
+1) What it is & why
+
+Positioning: An AI interviewer that conducts one-question-at-a-time conversations to elicit high-value information on any topic (user research, interviews, defect triage, post-mortems, expert knowledge capture).
+
+Goal: Produce a clean, reusable conversation record at the end of each session for downstream systems.
+
+Deliberate scope: Keep it lightweight—focus on high-quality questioning and a clean export.
+Not included: coverage/progress tracking, auto-summaries/scores, external tool/retrieval chains.
+
+2) Tech stack & responsibilities
+
+Frontend (React / Next.js):
+Welcome page (topic + starter prompts) → Chat page (single-question cadence; text/voice input where voice fills the input but does not auto-send) → Finish (export).
+
+Backend (FastAPI):
+Session management (session_id, ordered turns), model orchestration, and export object generation at Finish.
+
+Model layer (fast-agent):
+A lightweight “Interviewer Agent.”
+Input: topic, optional style, and serialized conversation-so-far.
+Output: exactly one next_question.
+Prompt policy: open → probe → close; ask one thing at a time; clarify short/ambiguous answers; respect boundaries.
+
+3) User flow
+
+User selects/enters the opening question.
+
+fast-agent returns the next question (single question only).
+
+user answers
+
+Repeat 2–3 until the user says “end.”
+
+User clicks Finish → backend returns the export payload (we will map this to LAD).
+
+
+4) Current minimal export (what we already produce)
+
+Top-level
+
+session_id (UUID)
+
+user_id (app user identifier)
+
+start_time, end_time (currently local time strings; can switch to ISO-8601/UTC)
+
+title (session title/topic)
+
+summary (short textual overview)
+
+chat_log: array of Message
+
+Message
+
+role: "user" | "assistant"
+
+content: string (plain text; newlines allowed)
+
+This is a full Q&A transcript with basic metadata—no coverage tracking, no auto-summary fields.
