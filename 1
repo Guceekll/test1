@@ -1,60 +1,110 @@
+Capture – AI Interview Assistant
 
-Capture — Domain-Agnostic AI Interview Assistant
-1) What it is & why
+1) Project Positioning and Goals
 
-Positioning: An AI interviewer that conducts one-question-at-a-time conversations to elicit high-value information on any topic (user research, interviews, defect triage, post-mortems, expert knowledge capture).
+Positioning:
+An AI interviewer that can be applied to any topic. It simulates real human interview styles and guides the interviewee to clearly articulate key information through a “one question at a time” format.
 
-Goal: Produce a clean, reusable conversation record at the end of each session for downstream systems.
+Goals:
+To produce a complete and reusable conversation log for downstream system consumption (we export it to LAD format as required by the other party).
 
-Deliberate scope: Keep it lightweight—focus on high-quality questioning and a clean export.
+Core Concept:
+It’s not casual chatting—it’s purposeful data collection (clear questioning, clean responses, and standardized export).
 
-2) Tech stack & responsibilities
+Typical Use Cases
 
-Frontend (React / Next.js):
-Welcome page (topic + starter prompts) → Chat page (single-question cadence; text/voice input where voice fills the input but does not auto-send) → Finish (export).
+User research and usability interviews
 
-Backend (FastAPI):
-Session management (session_id, ordered turns), model orchestration, and export object generation at Finish.
+Job interviews / candidate Q&A
 
-Model layer (fast-agent):
-A lightweight “Interviewer Agent.”
-Input: topic, optional style, and serialized conversation-so-far.
-Output: exactly one next_question.
-Prompt policy: open → probe → close; ask one thing at a time; clarify short/ambiguous answers; respect boundaries.
+Defect or failure troubleshooting interviews (for both products and equipment)
 
-3) User flow
+Project retrospectives and case documentation
 
-User selects/enters the opening question.
+Expert knowledge extraction (experience, steps, and key considerations)
 
-fast-agent returns the next question (single question only).
+3) Technical Architecture & Role Breakdown
+Frontend (React / Next.js)
 
-user answers
+Page Flow: Welcome Page (topic input + recommended questions) → Chat Page (one question–one answer, text/voice input) → Finish Export.
 
-Repeat 2–3 until the user says “end.”
+State: session_id, message list (chronological), input state, recording state.
 
-User clicks Finish → backend returns the export payload (we will map this to LAD).
+Constraints: Speech-to-text writes only to the input box and does not auto-send; the system asks only one question at a time.
 
+Backend (FastAPI)
 
-4) Current minimal export (what we already produce)
+Session Management: Generates/maintains session_id, saves turns (order, role, content, timestamp).
 
-Top-level
+Model Invocation: Passes “existing conversation + topic/style” to the model layer to get the next question.
 
-session_id (UUID)
+Export: On Finish, returns an export object (with minimal required fields) and maps it to LAD format (field names/time formats adjustable according to LAD specs).
 
-user_id (app user identifier)
+Model Layer (fast-agent)
 
-start_time, end_time (currently local time strings; can switch to ISO-8601/UTC)
+A lightweight “interview agent”
 
-title (session title/topic)
+Input: topic, style, conversation_so_far (text Q/A history)
 
-summary (short textual overview)
+Output: next_question (only one)
 
-chat_log: array of Message
+Questioning Strategy: Open → Deep Dive → Converge (no coverage tracking or auto summarization)
+
+4) Interaction Flow (User Perspective)
+
+The user chooses the system’s suggested first question or inputs their own.
+
+The fast-agent generates the next question based on context (single Q&A loop).
+
+User answers.
+
+Steps 2–3 repeat until the user says “end.”
+
+The user clicks Finish, and the backend exports the data (mapped to LAD for downstream use).
+
+7) Our Current “Minimal Export Structure” (Implemented)
+
+This structure matches the field set in the screenshot you provided. Field names/time formats can be modified later to comply with LAD specifications.
+
+Top Level
+
+session_id: string (UUID)
+
+user_id: string (in-app user identifier)
+
+start_time: string (local time string, can be converted to ISO-8601)
+
+end_time: string (local time string, can be converted to ISO-8601)
+
+title: string (title/topic)
+
+summary: string (brief overview)
+
+chat_log: Message[]
 
 Message
 
 role: "user" | "assistant"
 
-content: string (plain text; newlines allowed)
+content: string (text, allows line breaks; currently not rendered in Markdown)
 
-This is a full Q&A transcript with basic metadata—no coverage tracking, no auto-summary fields.
+Sample (Simplified)
+
+{
+  "session_id": "123e4567-e89b-12d3-a456-426614174000",
+  "user_id": "user_001",
+  "start_time": "2025-10-16T09:00:00",
+  "end_time": "2025-10-16T09:30:00",
+  "title": "Interview with Technician",
+  "summary": "Troubleshooting discussion on machine failure.",
+  "chat_log": [
+    {
+      "role": "user",
+      "content": "Can you describe the issue?"
+    },
+    {
+      "role": "assistant",
+      "content": "The machine stopped after the power fluctuation."
+    }
+  ]
+}
