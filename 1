@@ -1,136 +1,118 @@
-import streamlit as st
-import pyotp
-import time
-import math
+/* Global Styles */
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+    background-color: #f4f4f4;
+}
 
-# Absolute file path
-CSS_PATH = "style.css"
+/* User Icon Styles */
+.user-icon-container {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background-color: #f0f0f0;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
 
-def local_css(file_name):
-    """Inject custom CSS"""
-    with open(file_name, "r") as f:
-        st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+.user-icon-container:hover {
+    background-color: #e0e0e0;
+}
 
-def create_user_icon_html():
-    """Create HTML for user icon"""
-    html = """
-    <div class="user-icon-container">
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="user-icon">
-            <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path>
-            <circle cx="12" cy="7" r="4"></circle>
-        </svg>
-    </div>
-    """
-    return html
+.user-icon {
+    width: 24px;
+    height: 24px;
+    color: #666;
+}
 
-def create_circular_progress_html(label, current_token, next_token, countdown):
-    """Create HTML for circular progress bar"""
-    # Calculate degrees for progress bar
-    degrees = (countdown / 30) * 360
+/* Existing Token Card Styles */
+.stContainer {
+    background-color: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    margin-bottom: 20px;
+    transition: transform 0.3s ease;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
 
-    html = f"""
-    <div class="stContainer">
-        <div class="token-header">
-            <div class="token-label">{label}</div>
-        </div>
-        <div class="token-value">{current_token}</div>
-        <div class="circular-progress">
-            <div class="circular-progress-bar" style="background: conic-gradient(#4CAF50 {degrees}deg, #e0e0e0 {degrees}deg)"></div>
-            <div class="circular-progress-text">{countdown}</div>
-        </div>
-        <div class="token-next">Next: {next_token}</div>
-    </div>
-    """
-    return html
+/* Rest of the existing CSS remains the same */
+.stContainer:hover {
+    transform: scale(1.02);
+}
 
-class AuthenticatorApp:
-    def __init__(self):
-        # Initialize session state for storing OTP tokens
-        if 'tokens' not in st.session_state:
-            st.session_state.tokens = {
-                'TEL': self.generate_token(),
-                'TKL': self.generate_token(),
-                'TML': self.generate_token()
-            }
-        
-        # Initialize countdown timers
-        if 'countdown_timers' not in st.session_state:
-            st.session_state.countdown_timers = {
-                label: 30 for label in st.session_state.tokens
-            }
-        
-    def generate_token(self):
-        """Generate a new TOTP token"""
-        totp = pyotp.TOTP(pyotp.random_base32())
-        current_time = int(time.time())
-        return {
-            'secret': totp.secret,
-            'current': totp.now(),
-            'next': totp.at(current_time + 30),
-            'timestamp': current_time
-        }
-    
-    def render_token_card(self, label, token_data):
-        """Render a single token card with circular progress"""
-        countdown = st.session_state.countdown_timers[label]
-        
-        # Create HTML for token card
-        card_html = create_circular_progress_html(
-            label, 
-            token_data['current'], 
-            token_data['next'], 
-            countdown
-        )
-        
-        # Render HTML
-        st.markdown(card_html, unsafe_allow_html=True)
-    
-    def update_countdown(self):
-        """Update countdown timers"""
-        for label in st.session_state.countdown_timers:
-            if st.session_state.countdown_timers[label] > 0:
-                st.session_state.countdown_timers[label] -= 1
-            else:
-                # Regenerate token when countdown reaches 0
-                st.session_state.tokens[label] = self.generate_token()
-                st.session_state.countdown_timers[label] = 30
-    
-    def run(self):
-        """Main Streamlit app"""
-        st.set_page_config(page_title="Two-Factor Authenticator", page_icon="🔐", layout="wide")
-        
-        # Custom CSS for card-like appearance
-        local_css(CSS_PATH)
-        
-        # Render user icon
-        st.markdown(create_user_icon_html(), unsafe_allow_html=True)
-        
-        st.title("🔐 Two-Factor Authenticator")
-        
-        # Render tokens in a grid
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            self.render_token_card('TEL', st.session_state.tokens['TEL'])
-        
-        with col2:
-            self.render_token_card('TKL', st.session_state.tokens['TKL'])
-        
-        with col3:
-            self.render_token_card('TML', st.session_state.tokens['TML'])
-        
-        # Search functionality (placeholder)
-        st.sidebar.header("Search Tokens")
-        search_term = st.sidebar.text_input("Enter token label")
-        
-        # Add a timer to update countdown
-        time.sleep(1)
-        self.update_countdown()
-        st.rerun()
+.token-header {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    margin-bottom: 15px;
+}
 
-def main():
-    app = AuthenticatorApp()
-    app.run()
+.token-label {
+    color: #666;
+    font-size: 16px;
+}
 
-if __name__ == "__main__":
-    main()
+.token-countdown {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    color: #666;
+    font-size: 14px;
+}
+
+.token-value {
+    color: #333;
+    font-size: 48px;
+    font-weight: bold;
+    margin: 20px 0;
+}
+
+.circular-progress {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background-color: #f0f0f0;
+    overflow: hidden;
+    z-index: 10;
+}
+
+.circular-progress-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: conic-gradient(#4CAF50 0deg, #e0e0e0 0deg);
+    border-radius: 50%;
+    transform: rotate(-90deg);
+    transition: background 0.5s ease;
+}
+
+.circular-progress-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 2;
+    color: #333;
+    font-size: 10px;
+    font-weight: bold;
+}
+
+.token-next {
+    color: #666;
+    font-size: 14px;
+    margin-top: 10px;
+}
