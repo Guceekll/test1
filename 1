@@ -1,119 +1,136 @@
-Capture – AI Interview Assistant
+import streamlit as st
+import pyotp
+import time
+import math
 
-1) Project Positioning and Goals
+# Absolute file path
+CSS_PATH = "style.css"
 
-Positioning:
-An AI interviewer that can be applied to any topic. It simulates real human interview styles and guides the interviewee to clearly articulate key information through a “one question at a time” format.
+def local_css(file_name):
+    """Inject custom CSS"""
+    with open(file_name, "r") as f:
+        st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
 
-Goals:
-To produce a complete and reusable conversation log for downstream system consumption (we export it to LAD format as required by the other party).
+def create_user_icon_html():
+    """Create HTML for user icon"""
+    html = """
+    <div class="user-icon-container">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="user-icon">
+            <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+        </svg>
+    </div>
+    """
+    return html
 
-Core Concept:
-It’s not casual chatting—it’s purposeful data collection (clear questioning, clean responses, and standardized export).
+def create_circular_progress_html(label, current_token, next_token, countdown):
+    """Create HTML for circular progress bar"""
+    # Calculate degrees for progress bar
+    degrees = (countdown / 30) * 360
 
-Typical Use Cases
+    html = f"""
+    <div class="stContainer">
+        <div class="token-header">
+            <div class="token-label">{label}</div>
+        </div>
+        <div class="token-value">{current_token}</div>
+        <div class="circular-progress">
+            <div class="circular-progress-bar" style="background: conic-gradient(#4CAF50 {degrees}deg, #e0e0e0 {degrees}deg)"></div>
+            <div class="circular-progress-text">{countdown}</div>
+        </div>
+        <div class="token-next">Next: {next_token}</div>
+    </div>
+    """
+    return html
 
-User research and usability interviews
+class AuthenticatorApp:
+    def __init__(self):
+        # Initialize session state for storing OTP tokens
+        if 'tokens' not in st.session_state:
+            st.session_state.tokens = {
+                'TEL': self.generate_token(),
+                'TKL': self.generate_token(),
+                'TML': self.generate_token()
+            }
+        
+        # Initialize countdown timers
+        if 'countdown_timers' not in st.session_state:
+            st.session_state.countdown_timers = {
+                label: 30 for label in st.session_state.tokens
+            }
+        
+    def generate_token(self):
+        """Generate a new TOTP token"""
+        totp = pyotp.TOTP(pyotp.random_base32())
+        current_time = int(time.time())
+        return {
+            'secret': totp.secret,
+            'current': totp.now(),
+            'next': totp.at(current_time + 30),
+            'timestamp': current_time
+        }
+    
+    def render_token_card(self, label, token_data):
+        """Render a single token card with circular progress"""
+        countdown = st.session_state.countdown_timers[label]
+        
+        # Create HTML for token card
+        card_html = create_circular_progress_html(
+            label, 
+            token_data['current'], 
+            token_data['next'], 
+            countdown
+        )
+        
+        # Render HTML
+        st.markdown(card_html, unsafe_allow_html=True)
+    
+    def update_countdown(self):
+        """Update countdown timers"""
+        for label in st.session_state.countdown_timers:
+            if st.session_state.countdown_timers[label] > 0:
+                st.session_state.countdown_timers[label] -= 1
+            else:
+                # Regenerate token when countdown reaches 0
+                st.session_state.tokens[label] = self.generate_token()
+                st.session_state.countdown_timers[label] = 30
+    
+    def run(self):
+        """Main Streamlit app"""
+        st.set_page_config(page_title="Two-Factor Authenticator", page_icon="🔐", layout="wide")
+        
+        # Custom CSS for card-like appearance
+        local_css(CSS_PATH)
+        
+        # Render user icon
+        st.markdown(create_user_icon_html(), unsafe_allow_html=True)
+        
+        st.title("🔐 Two-Factor Authenticator")
+        
+        # Render tokens in a grid
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            self.render_token_card('TEL', st.session_state.tokens['TEL'])
+        
+        with col2:
+            self.render_token_card('TKL', st.session_state.tokens['TKL'])
+        
+        with col3:
+            self.render_token_card('TML', st.session_state.tokens['TML'])
+        
+        # Search functionality (placeholder)
+        st.sidebar.header("Search Tokens")
+        search_term = st.sidebar.text_input("Enter token label")
+        
+        # Add a timer to update countdown
+        time.sleep(1)
+        self.update_countdown()
+        st.rerun()
 
-Job interviews / candidate Q&A
+def main():
+    app = AuthenticatorApp()
+    app.run()
 
-Defect or failure troubleshooting interviews (for both products and equipment)
-
-Project retrospectives and case documentation
-
-Expert knowledge extraction (experience, steps, and key considerations)
-
-3) Technical Architecture & Role Breakdown
-Frontend (React / Next.js)
-
-Page Flow: Welcome Page (topic input + recommended questions) → Chat Page (one question–one answer, text/voice input) → Finish Export.
-
-State: session_id, message list (chronological), input state, recording state.
-
-Constraints: Speech-to-text writes only to the input box and does not auto-send; the system asks only one question at a time.
-
-Backend (FastAPI)
-
-Session Management: Generates/maintains session_id, saves turns (order, role, content, timestamp).
-
-Model Invocation: Passes “existing conversation + topic/style” to the model layer to get the next question.
-
-Export: On Finish, returns an export object (with minimal required fields) and maps it to LAD format (field names/time formats adjustable according to LAD specs).
-
-Model Layer (fast-agent)
-
-A lightweight “interview agent”
-
-Input: topic, style, conversation_so_far (text Q/A history)
-
-Output: next_question (only one)
-
-Questioning Strategy: Open → Deep Dive → Converge (no coverage tracking or auto summarization)
-
-4) Interaction Flow (User Perspective)
-
-The user chooses the system’s suggested first question or inputs their own.
-
-The fast-agent generates the next question based on context (single Q&A loop).
-
-User answers.
-
-Steps 2–3 repeat until the user says “end.”
-
-The user clicks Finish, and the backend exports the data (mapped to LAD for downstream use).
-
-7) Our Current “Minimal Export Structure” (Implemented)
-
-This structure matches the field set in the screenshot you provided. Field names/time formats can be modified later to comply with LAD specifications.
-
-Top Level
-
-session_id: string (UUID)
-
-user_id: string (in-app user identifier)
-
-start_time: string (local time string, can be converted to ISO-8601)
-
-end_time: string (local time string, can be converted to ISO-8601)
-
-title: string (title/topic)
-
-summary: string (brief overview)
-
-chat_log: Message[]
-
-Message
-
-role: "user" | "assistant"
-
-content: string (text, allows line breaks; currently not rendered in Markdown)
-
-Sample (Simplified)
-
-{
-  "session_id": "123e4567-e89b-12d3-a456-426614174000",
-  "user_id": "user_001",
-  "start_time": "2025-10-16T09:00:00",
-  "end_time": "2025-10-16T09:30:00",
-  "title": "Interview with Technician",
-  "summary": "Troubleshooting discussion on machine failure.",
-  "chat_log": [
-    {
-      "role": "user",
-      "content": "Can you describe the issue?"
-    },
-    {
-      "role": "assistant",
-      "content": "The machine stopped after the power fluctuation."
-    }
-  ]
-}
-
-
-Why export to LAD:
-
-A standardized interface, allowing direct reuse of the existing validation, storage, and analysis pipeline on the other side.
-
-Versioning and compatibility are managed by the LAD specification, avoiding long-term maintenance costs caused by private JSON formats.
-
-Facilitates cross-team collaboration and compliance governance (e.g., encoding, data masking, retention) through unified standards.
+if __name__ == "__main__":
+    main()
