@@ -1,78 +1,255 @@
 import streamlit as st
-import os
 import pyotp
+import time
+import os
+import base64
+import math
 
 # 导入本地模块
-from base32_converter import text_to_base32
+from base32_converter import text_to_base32, is_valid_base32, generate_token_secret
 
 # Absolute file path
-TOKENS_FILE = "./tokens.txt"
+CSS_PATH = "/home/claude/style.css"
+TOKENS_FILE = "/home/claude/tokens.txt"
 
-def save_token_to_file(name, original_key, base32_key, time_interval):
-    """Save token to file, handling duplicates"""
-    tokens = []
-    file_exists = os.path.exists(TOKENS_FILE)
-    
-    # 读取现有的令牌
-    if file_exists:
+# 全局变量存储每个令牌的当前状态
+TOKEN_STATES = {}
+
+def local_css(file_name):
+    """Inject custom CSS"""
+    with open(file_name, "r") as f:
+        st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+
+def create_user_icon_html():
+    """Create HTML for user icon"""
+    html = """
+    <div class="user-icon-container">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="user-icon">
+            <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+        </svg>
+    </div>
+    """
+    return html
+
+def load_tokens_from_file():
+    """Load tokens from file"""
+    tokens = {}
+    if os.path.exists(TOKENS_FILE):
         with open(TOKENS_FILE, 'r') as f:
-            # 读取所有行，移除空行和重复的标题行
-            all_lines = f.readlines()
-            tokens = [
-                line.strip() for line in all_lines 
-                if line.strip() and not line.strip().lower().startswith('name,key,time')
-            ]
+            # 跳过标题行
+            header = next(f)
+            
+            for line in f:
+                try:
+                    parts = line.strip().split(',')
+                    if len(parts) >= 3:
+                        name, key, time_interval = parts[:3]
+                        # 使用原始 key，但生成 Base32 编码的 TOTP
+                        base32_key = text_to_base32(key)
+                        tokens[name] = {
+                            'secret': base32_key,  # Base32 编码用于 TOTP
+                            'original_key': key,   # 保留原始 key
+                            'countdown_time': int(time_interval) if time_interval.isdigit() else 30
+                        }
+                except (ValueError, IndexError) as e:
+                    # 如果解析出错，跳过这一行并记录错误
+                    print(f"Error parsing token line: {line.strip()} - {e}")
     
-    # 检查是否已存在同名令牌
-    tokens = [token for token in tokens if not token.startswith(f"{name},")]
+    return tokens
+
+def generate_token(secret, countdown_time, current_time, force_default=False):
+    """Generate a new TOTP token"""
+    try:
+        base32_secret = generate_token_secret(secret)
+        
+        print(f"Generated Base32 secret for {secret}: {base32_secret}")
+        
+        # 如果强制使用默认值或无法生成有效的 Base32
+        if force_default or not is_valid_base32(base32_secret):
+            print(f"Invalid Base32 for {secret}: {base32_secret}")
+            return {
+                "period": current_time - (current_time % countdown_time),
+                "current": "000000",
+                "next": "000000"
+            }
+        
+        totp = pyotp.TOTP(base32_secret)
+        
+        # 计算当前周期的起始时间
+        period_start = current_time - (current_time % countdown_time)
+        
+        # 检查是否需要更新令牌状态
+        if (secret not in TOKEN_STATES or 
+            TOKEN_STATES[secret]['period'] != period_start):
+            current_token = totp.now()
+            next_token = totp.at(period_start + countdown_time)
+            TOKEN_STATES[secret] = {
+                'period': period_start,
+                'current': current_token,
+                'next': next_token
+            }
+        
+        return TOKEN_STATES[secret]
     
-    # 添加新令牌
-    tokens.append(f"{name},{original_key},{time_interval}")
+    except Exception as e:
+        print(f"Token generation error for {secret}: {e}")
+        return {
+            'period': current_time - (current_time % countdown_time),
+            'current': "000000",
+            'next': "000000"
+        }
     
-    # 写回文件
-    with open(TOKENS_FILE, 'w') as f:
-        # 写入标题
-        f.write("name,key,time\n")
-        # 写入令牌
-        for token in tokens:
-            f.write(f"{token}\n")
+    except Exception as e:
+        print(f"Token generation error for {secret}: {e}")
+        return {
+            'period': current_time - (current_time % countdown_time),
+            'current': "000000",
+            'next': "000000"
+        }
+    
+    except Exception as e:
+        print(f"Token generation error for {secret}: {e}")
+        return {
+            'period': current_time - (current_time % countdown_time),
+            'current': "000000",
+            'next': "000000"
+        }
+    
+    except Exception as e:
+        print(f"Token generation error for {secret}: {e}")
+        return {
+            'period': current_time - (current_time % countdown_time),
+            'current': "000000",
+            'next': "000000"
+        }
+    
+    except Exception as e:
+        print(f"Token generation error for {secret}: {e}")
+        return {
+            'period': current_time - (current_time % countdown_time),
+            'current': "000000",
+            'next': "000000"
+        }
+    
+    except Exception as e:
+        print(f"Token generation error for {secret}: {e}")
+        return {
+            'period': current_time - (current_time % countdown_time),
+            'current': "000000",
+            'next': "000000"
+        }
+    
+    except Exception as e:
+        print(f"Token generation error for {secret}: {e}")
+        return {
+            'period': current_time - (current_time % countdown_time),
+            'current': "000000",
+            'next': "000000"
+        }
+    
+    except Exception as e:
+        print(f"Token generation error: {e}")
+        return {
+            'current': '000000',
+            'next': '000000'
+        }
+
+def create_circular_progress_html(label, current_token, next_token, countdown, total_time):
+    """Create HTML for circular progress bar"""
+    # Calculate degrees for progress bar
+    degrees = (countdown / total_time) * 360
+    progress_color = "#4CAF50" if countdown > 5 else "#FF5722"
+
+    html = f"""
+    <div class="stContainer">
+        <div class="token-header">
+            <div class="token-label">{label}</div>
+        </div>
+        <div class="token-value">{current_token}</div>
+        <div class="circular-progress">
+            <div class="circular-progress-bar" style="background: conic-gradient({progress_color} {degrees}deg, #e0e0e0 {degrees}deg)"></div>
+            <div class="circular-progress-text">{countdown}</div>
+        </div>
+        <div class="token-next">Next: {next_token}</div>
+    </div>
+    """
+    return html
+
+def calculate_remaining_time(countdown_time, current_time=None):
+    """Calculate remaining time for a token"""
+    if current_time is None:
+        current_time = int(time.time())
+    period_start = current_time - (current_time % countdown_time)
+    remaining_time = countdown_time - (current_time - period_start)
+    return remaining_time
 
 def main():
-    st.set_page_config(page_title="Add Token", page_icon="➕", layout="centered")
+    st.set_page_config(page_title="Two-Factor Authenticator", page_icon="🔐", layout="wide")
     
-    st.title("➕ Add New Token")
+    # Custom CSS for card-like appearance
+    local_css("/home/claude/style.css")
     
-    # Token name input
-    token_name = st.text_input("Token Name", placeholder="e.g., Google")
+    # 侧边栏
+    with st.sidebar:
+        st.header("Tokens")
+        
+        # Add New Token Button
+        if st.button("➕ Add New Token"):
+            st.switch_page("pages/add_token.py")
+        
+        # Search functionality
+        st.header("Search Tokens")
+        search_term = st.text_input("Enter token label")
     
-    # Secret key input
-    secret_key = st.text_input("Secret Key", placeholder="e.g., 111")
+    # Render user icon
+    st.markdown(create_user_icon_html(), unsafe_allow_html=True)
     
-    # Countdown time input
-    countdown_time = st.number_input("Countdown Time (seconds)", min_value=10, max_value=60, value=30)
+    st.title("🔐 Two-Factor Authenticator")
     
-    # Submit button
-    if st.button("Save Token"):
-        if not token_name:
-            st.error("Token Name is required")
-        else:
-            # 使用原始输入的 key
-            base32_key = text_to_base32(secret_key)
+    # 加载令牌
+    tokens = load_tokens_from_file()
+    
+    # 如果有搜索词，过滤令牌
+    if search_term:
+        tokens = {k: v for k, v in tokens.items() if search_term.lower() in k.lower()}
+    
+    # Render tokens in a grid
+    cols = st.columns(len(tokens))
+    
+    # 获取当前时间，确保所有令牌使用同一时间戳
+    current_time = int(time.time())
+    
+    # 使用枚举确保显示所有令牌
+    for i, (label, token_data) in enumerate(tokens.items()):
+        with cols[i]:
+            # 计算每个令牌的剩余时间
+            remaining_time = calculate_remaining_time(token_data['countdown_time'], current_time)
             
-            # 保存到文件 - 存储原始 key
-            save_token_to_file(token_name, secret_key, base32_key, countdown_time)
+            token = generate_token(
+                token_data['secret'], 
+                token_data['countdown_time'], 
+                current_time
+            )
             
-            # 显示成功消息
-            st.success(f"Token '{token_name}' has been added successfully!")
-            
-            # 等待一秒，给用户看到成功消息
-            st.spinner('Redirecting to main page...')
-            
-            # 设置查询参数
-            st.query_params.refresh = 'true'
-            
-            # 跳转回主页
-            st.switch_page("app.py")
+            st.markdown(
+                create_circular_progress_html(
+                    label, 
+                    token['current'], 
+                    token['next'], 
+                    remaining_time,
+                    token_data['countdown_time']
+                ), 
+                unsafe_allow_html=True
+            )
+
+    # 检查是否有刷新参数
+    if 'refresh' in st.query_params and st.query_params['refresh'] == 'true':
+        st.query_params.clear()
+
+    # 使用最小的倒计时间隔来刷新
+    time.sleep(1)  # 每秒刷新一次
+    st.rerun()
 
 if __name__ == "__main__":
     main()
