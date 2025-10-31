@@ -1,5 +1,78 @@
-name,key,time
-TEL,111,30
-TKL,222,60
-TML,333,45
-www,444,30
+import streamlit as st
+import os
+import pyotp
+
+# 导入本地模块
+from base32_converter import text_to_base32
+
+# Absolute file path
+TOKENS_FILE = "./tokens.txt"
+
+def save_token_to_file(name, original_key, base32_key, time_interval):
+    """Save token to file, handling duplicates"""
+    tokens = []
+    file_exists = os.path.exists(TOKENS_FILE)
+    
+    # 读取现有的令牌
+    if file_exists:
+        with open(TOKENS_FILE, 'r') as f:
+            # 读取所有行，移除空行和重复的标题行
+            all_lines = f.readlines()
+            tokens = [
+                line.strip() for line in all_lines 
+                if line.strip() and not line.strip().lower().startswith('name,key,time')
+            ]
+    
+    # 检查是否已存在同名令牌
+    tokens = [token for token in tokens if not token.startswith(f"{name},")]
+    
+    # 添加新令牌
+    tokens.append(f"{name},{original_key},{time_interval}")
+    
+    # 写回文件
+    with open(TOKENS_FILE, 'w') as f:
+        # 写入标题
+        f.write("name,key,time\n")
+        # 写入令牌
+        for token in tokens:
+            f.write(f"{token}\n")
+
+def main():
+    st.set_page_config(page_title="Add Token", page_icon="➕", layout="centered")
+    
+    st.title("➕ Add New Token")
+    
+    # Token name input
+    token_name = st.text_input("Token Name", placeholder="e.g., Google")
+    
+    # Secret key input
+    secret_key = st.text_input("Secret Key", placeholder="e.g., 111")
+    
+    # Countdown time input
+    countdown_time = st.number_input("Countdown Time (seconds)", min_value=10, max_value=60, value=30)
+    
+    # Submit button
+    if st.button("Save Token"):
+        if not token_name:
+            st.error("Token Name is required")
+        else:
+            # 使用原始输入的 key
+            base32_key = text_to_base32(secret_key)
+            
+            # 保存到文件 - 存储原始 key
+            save_token_to_file(token_name, secret_key, base32_key, countdown_time)
+            
+            # 显示成功消息
+            st.success(f"Token '{token_name}' has been added successfully!")
+            
+            # 等待一秒，给用户看到成功消息
+            st.spinner('Redirecting to main page...')
+            
+            # 设置查询参数
+            st.query_params.refresh = 'true'
+            
+            # 跳转回主页
+            st.switch_page("app.py")
+
+if __name__ == "__main__":
+    main()
