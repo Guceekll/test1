@@ -1,141 +1,38 @@
-/* Grid layout for cards */
-.code-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr); /* 3 equal columns */
-    gap: 20px;
-    width: 100%;
-    padding: 20px;
-}
+Two-Factor Authenticator
+ローカルで動作するシンプルな TOTP（ワンタイムパスワード）認証アプリ です。
+Streamlitを使って構築され、コードの追加・編集・削除・検索・復元ができます。
 
-/* Card container */
-.stContainer {
-    background-color: white;
-    border-radius: 12px;
-    padding: 20px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    transition: transform 0.3s ease;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    height: 250px;                 
-    justify-content: space-between;
-    margin-bottom: 20px;
-    position: relative;
-}
+主な機能
+・リアルタイムで2FAコードを自動更新
+・新しいコードの追加・編集・削除
+・コード名での検索
+・ごみ箱（削除コードの復元／完全削除）
+・ローカル保存（code.txt と code_trash.txt）
 
-.stContainer:hover {
-    transform: scale(1.02);
-}
+Create & activate a virtual environment
 
-/* Card header & labels */
-.code-header {
-    display: flex;
-    justify-content: space-between;
-    width: 100%;
-    margin-bottom: 15px;
-}
+インストール：
+1. 仮想環境を作成して有効化
+python3 -m venv venv
+venv\Scripts\activate
 
-.code-label {
-    color: #666;
-    font-size: 16px;
-}
+2. 依存パッケージをインストール
+pip install -r requirements.txt
 
-.code-value {
-    color: #333;
-    font-size: 36px;
-    font-weight: bold;
-    text-align: center;
-}
+起動
+streamlit run app.py
 
-/* Circular countdown progress */
-.circular-progress {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    background-color: #f0f0f0;
-    overflow: hidden;
-}
+ブラウザで http://localhost:8501を開いてください。
 
-.circular-progress-bar {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    border-radius: 50%;
-    transition: background 0.5s linear;
-}
-
-.circular-progress-text {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 2;
-    color: #333;
-    font-size: 12px;
-    font-weight: bold;
-}
-
-/* Footer line for "next" code */
-.code-next {
-    color: #666;
-    font-size: 14px;
-    margin-top: 10px;
-}
-
-/* Sidebar: compact user box */
-.user-box {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 12px;
-    border: 1px solid #eee;
-    border-radius: 12px;
-    background: #fafafa;
-    margin-bottom: 10px;
-}
-
-.user-avatar {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: #f0f2f6;
-    font-size: 20px;
-    line-height: 1;
-}
-
-.user-name {
-    font-size: 14px;
-    color: #333;
-}
-
-/* Hide Streamlit default sidebar/page navigation */
-[data-testid="stSidebarNav"] {
-    display: none !important;
-}
-
-nav[aria-label="pages"],
-nav[aria-label="Pages"] {
-    display: none !important;
-}
-
-/* Responsive tweaks */
-@media (max-width: 1200px) {
-    .stContainer {
-        height: 220px;
-    }
-}
-
-@media (max-width: 768px) {
-    .stContainer {
-        height: 200px;
-        padding: 15px;
-    }
-}
+フォルダ構成
+app.py                 # ホーム画面
+code_shared.py         # 共通処理（TOTP生成・UI）
+base32_converter.py    # シークレット文字列の変換
+pages/
+ ├── add_code.py       # コード追加
+ ├── edit_code.py      # コード編集
+ ├── search.py         # 検索ページ
+ └── recycle_bin.py    # ごみ箱
+style.css              # CSSデザイン
+code.txt               # 登録コード
+code_trash.txt         # 削除コード
