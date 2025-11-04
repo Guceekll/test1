@@ -1,36 +1,41 @@
-import streamlit as st
-import time
-from code_shared import (
-    local_css, load_code_from_file,
-    render_code_card, CSS_PATH, render_sidebar
-)
+import base64
+import hashlib
 
-st.set_page_config(page_title="Two-Factor Authenticator", page_icon="🔐", layout="wide")
+def generate_base32_from_numeric_key(key):
+    hash_obj = hashlib.sha256(key.encode('utf-8'))
+    hex_digest = hash_obj.hexdigest()
 
-def main():
-    local_css(CSS_PATH)
+    base32_secret = base64.b32encode(bytes.fromhex(hex_digest)).decode('utf-8').rstrip('=')
+    
+    return base32_secret[:16]
 
-    render_sidebar("home")
+def is_base32_encodable(text):
+    try:
+        base64.b32encode(text.encode('utf-8'))
+        return True
+    except Exception:
+        return False
 
-    st.title("🔐 Two-Factor Authenticator")
+def generate_code_secret(key):
+    if key.isdigit():
+        return generate_base32_from_numeric_key(key)
+    
+    if is_base32_encodable(key):
+        return key
+    
+    hash_obj = hashlib.sha256(key.encode('utf-8'))
+    hex_digest = hash_obj.hexdigest()
+    
+    base32_secret = base64.b32encode(bytes.fromhex(hex_digest)).decode('utf-8').rstrip('=')
+    
+    return base32_secret[:16]
 
-    code = load_code_from_file()
-    st.session_state["code"] = code
+def text_to_base32(text):
+    return generate_code_secret(text)
 
-    current_time = int(time.time())
-
-    if code:
-        cols = st.columns(3)
-        col = 0
-        for label, code_data in code.items():
-            with cols[col]:
-                render_code_card(label, code_data, current_time)
-            col = (col + 1) % 3
-    else:
-        st.info("No code found. Please add one.")
-
-    time.sleep(1)
-    st.rerun()
-
-if __name__ == "__main__":
-    main()
+def is_valid_base32(text):
+    try:
+        base64.b32decode(text + '=' * ((8 - len(text)) % 8))
+        return True
+    except Exception:
+        return False
