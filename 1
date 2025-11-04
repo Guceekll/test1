@@ -1,42 +1,44 @@
-"""Streamlit home page displaying all two-factor codes with auto-refresh."""
-import streamlit as st
-import time
-from code_shared import (
-    local_css, load_code_from_file,
-    render_code_card, CSS_PATH, render_sidebar
-)
+"""Utility module for generating and validating Base32 secrets."""
+import base64
+import hashlib
+
+SECRET_LEN = 16  # length of the returned Base32 secret
 
 
-# ==== Page Entrypoint ====
-def main() -> None:
-    """Render the main authenticator grid and refresh every second."""
-    # Global UI setup
-    local_css(CSS_PATH)
-    render_sidebar("home")
-
-    st.set_page_config(page_title="Two-Factor Authenticator", layout="wide")
-    st.title("🔐 Two-Factor Authenticator")
-
-    # Load code data and persist in session for reuse
-    code = load_code_from_file()
-    st.session_state["code"] = code
-    current_time = int(time.time())
-
-    # Render code cards in a 3-column grid
-    if code:
-        cols = st.columns(3)
-        col = 0
-        for label, code_data in code.items():
-            with cols[col]:
-                render_code_card(label, code_data, current_time)
-            col = (col + 1) % 3
-    else:
-        st.info("No code found. Please add one.")
-
-    # Auto-refresh every second for live countdown display
-    time.sleep(1)
-    st.rerun()
+def _to_base32_prefix(data: bytes, length: int = SECRET_LEN) -> str:
+    """Base32-encode bytes (no padding) and return the first `length` chars."""
+    return base64.b32encode(data).decode("utf-8").rstrip("=").upper()[:length]
 
 
-if __name__ == "__main__":
-    main()
+def is_valid_base32(text: str) -> bool:
+    """Return True if `text` is a decodable Base32 string (padding tolerated)."""
+    try:
+        base64.b32decode(text.upper() + "=" * ((8 - len(text)) % 8))
+        return True
+    except Exception:
+        return False
+
+
+def generate_base32_from_numeric_key(key: str) -> str:
+    """Deterministically derive a Base32 secret from a numeric key."""
+    # Directly hash the UTF-8 bytes; no hex→bytes roundtrip
+    digest = hashlib.sha256(key.encode("utf-8")).digest()
+    return _to_base32_prefix(digest)
+
+
+def generate_code_secret(key: str) -> str:
+    """
+    Generate a consistent Base32 secret from any input:
+    - If it's purely digits: derive from numeric key (hash).
+    - Else if it's already valid Base32: return it as-is (normalized to upper).
+    - Otherwise: hash the text and encode to Base32.
+    """
+    if key.isdigit():
+        return generate_base32_from_numeric_key(key)
+
+    if is_valid_base32(key):
+        return key.upper()[:SECRET_LEN]  # normalize & truncate
+
+    digest = hashlib.sha256(key.encode("utf-8")).digest()
+    return _to_base32_prefix(digest)
+
