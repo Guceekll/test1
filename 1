@@ -1,69 +1,39 @@
-"""Streamlit page for searching and displaying a single code entry by name."""
+"""Streamlit home page displaying all two-factor codes with auto-refresh."""
 import streamlit as st
 import time
 from code_shared import (
-    local_css, render_code_card, CSS_PATH,
-    load_code_from_file, render_sidebar
+    local_css, load_code_from_file,
+    render_code_card, CSS_PATH, render_sidebar
 )
-
-# ==== Session State ====
-def _init_state() -> None:
-    """Initialize minimal session state for search."""
-    st.session_state.setdefault("search_term", "")
-    st.session_state.setdefault("search_mode", False)
-
-
-def _submit_search() -> None:
-    """Commit current input into search state and toggle search mode."""
-    term = st.session_state.get("search_input", "").strip()
-    st.session_state["search_term"] = term
-    st.session_state["search_mode"] = bool(term)
 
 
 # ==== Page Entrypoint ====
 def main() -> None:
-    """Render the search UI and display the first matching code entry."""
-    _init_state()
+    """Render the main authenticator grid and refresh every second."""
+    # Global UI setup
     local_css(CSS_PATH)
-    render_sidebar("sub")
+    render_sidebar("home")
 
-    st.set_page_config(page_title="Search Code", layout="wide")
-    st.title("🔍 Search Code")
-    st.markdown("Search by name")
+    st.set_page_config(page_title="Two-Factor Authenticator", layout="wide")
+    st.title("🔐 Two-Factor Authenticator")
 
-    # Search input + explicit button (supports Enter, blur, and click)
-    c1, c2 = st.columns([3, 1], gap="small")
-    with c1:
-        st.text_input(
-            "Enter code label",
-            key="search_input",
-            placeholder="e.g., TEL",
-            label_visibility="collapsed",
-            on_change=_submit_search,
-        )
-    with c2:
-        if st.button("Search", use_container_width=True):
-            _submit_search()
-
-    # Reset search mode if the input becomes empty
-    if not st.session_state.get("search_input", "").strip():
-        st.session_state["search_term"] = ""
-        st.session_state["search_mode"] = False
-
-    # Load data and current timestamp once per render
-    code = st.session_state.get("code") or load_code_from_file()
+    # Load code data and persist in session for reuse
+    code = load_code_from_file()
+    st.session_state["code"] = code
     current_time = int(time.time())
 
-    # Apply case-insensitive substring match and render the first hit
-    if st.session_state["search_mode"] and st.session_state["search_term"]:
-        term = st.session_state["search_term"].lower()
-        matching = {k: v for k, v in code.items() if term in k.lower()}  # fuzzy match
-        if matching:
-            label, code_data = list(matching.items())[0]
-            render_code_card(label, code_data, current_time, full_width=True)
-        else:
-            st.info("No code found with that label.")
+    # Render code cards in a 3-column grid
+    if code:
+        cols = st.columns(3)
+        col = 0
+        for label, code_data in code.items():
+            with cols[col]:
+                render_code_card(label, code_data, current_time)
+            col = (col + 1) % 3
+    else:
+        st.info("No code found. Please add one.")
 
+    # Auto-refresh every second for live countdown display
     time.sleep(1)
     st.rerun()
 
