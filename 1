@@ -1,116 +1,59 @@
-import os
-import time
 import streamlit as st
+import time
+from code_shared import (
+    local_css, render_code_card, CSS_PATH,
+    load_code_from_file, render_sidebar
+)
 
-from code_shared import local_css, CSS_PATH, render_sidebar
+st.set_page_config(page_title="🔍 Search Code", page_icon="🔍", layout="wide")
 
-TRASH_PATH = "./code_trash.txt"
-FILE_PATH = "./code.txt"
-HEADER = "name,key,time\n"
-TRASH_HEADER = "name,key,time,deleted_at\n"
+def _init_state():
+    st.session_state.setdefault("search_term", "")
+    st.session_state.setdefault("search_mode", False)
 
-def ensure_file(path: str, header: str):
-    if not os.path.exists(path):
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(header)
+def _submit_search():
+    term = st.session_state.get("search_input", "").strip()
+    st.session_state["search_term"] = term
+    st.session_state["search_mode"] = bool(term)
 
-def load_trash():
-    ensure_file(TRASH_PATH, TRASH_HEADER)
-    data = {}
-    with open(TRASH_PATH, "r", encoding="utf-8") as f:
-        for line in f.readlines()[1:]:
-            parts = [p.strip() for p in line.strip().split(",")]
-            if len(parts) >= 4:
-                name, key, t, deleted_at = parts[:4]
-                try:
-                    t = int(t)
-                except:
-                    t = 30
-                try:
-                    deleted_at = int(deleted_at)
-                except:
-                    deleted_at = int(time.time())
-                data[name] = {"secret": key, "countdown_time": t, "deleted_at": deleted_at}
-    return data
+def main():
+    _init_state()
+    local_css(CSS_PATH)
+    render_sidebar("sub")
 
-def write_trash(data):
-    ensure_file(TRASH_PATH, TRASH_HEADER)
-    with open(TRASH_PATH, "w", encoding="utf-8") as f:
-        f.write(TRASH_HEADER)
-        for name, item in data.items():
-            f.write(f"{name},{item['secret']},{int(item['countdown_time'])},{int(item['deleted_at'])}\n")
+    st.title("🔍 Search Code")
+    st.markdown("### Search by name")
 
-def load_codes():
-    ensure_file(FILE_PATH, HEADER)
-    data = {}
-    with open(FILE_PATH, "r", encoding="utf-8") as f:
-        for line in f.readlines()[1:]:
-            parts = [p.strip() for p in line.strip().split(",")]
-            if len(parts) >= 3:
-                name, key, t = parts[:3]
-                data[name] = {"secret": key, "countdown_time": int(t)}
-    return data
+    c1, c2 = st.columns([3, 1], gap="small")
+    with c1:
+        st.text_input(
+            "Enter code label",
+            key="search_input",
+            placeholder="e.g., Google",
+            label_visibility="collapsed",
+        )
+    with c2:
+        if st.button("Search", use_container_width=True):
+            _submit_search()
 
-def write_codes(data):
-    ensure_file(FILE_PATH, HEADER)
-    with open(FILE_PATH, "w", encoding="utf-8") as f:
-        f.write(HEADER)
-        for name, item in data.items():
-            f.write(f"{name},{item['secret']},{item['countdown_time']}\n")
+    if not st.session_state.get("search_input", "").strip():
+        st.session_state["search_term"] = ""
+        st.session_state["search_mode"] = False
 
-def unique_name(base, used):
-    name = base
-    i = 1
-    while name.lower() in used:
-        name = f"{base}_restored{i}"
-        i += 1
-    return name
+    code = st.session_state.get("code") or load_code_from_file()
+    current_time = int(time.time())
 
-local_css(CSS_PATH)
-render_sidebar("sub")
-st.title("🗑️ Recycle Bin")
+    if st.session_state["search_mode"] and st.session_state["search_term"]:
+        term = st.session_state["search_term"].lower()
+        matching = {k: v for k, v in code.items() if k.lower() == term}
+        if matching:
+            label, code_data = list(matching.items())[0]
+            render_code_card(label, code_data, current_time, full_width=True)
+        else:
+            st.info("No code found with that label.")
 
-trash = load_trash()
-if not trash:
-    st.info("Recycle Bin is empty.")
-    st.stop()
+    time.sleep(1)
+    st.rerun()
 
-cols = st.columns([6, 2, 2])
-with cols[1]:
-    if st.button("🗑️ Empty Bin", use_container_width=True):
-        write_trash({})
-        st.success("Recycle Bin emptied.")
-        st.rerun()
-with cols[2]:
-    st.caption(f"{len(trash)} item(s)")
-
-hdr = st.columns([3, 3, 2, 2])
-with hdr[0]: st.markdown("**Name**")
-with hdr[1]: st.markdown("**Deleted At**")
-with hdr[2]: st.markdown("**Restore**")
-with hdr[3]: st.markdown("**Delete**")
-
-trash_sorted = sorted(trash.items(), key=lambda x: x[1]["deleted_at"], reverse=True)
-for name, item in trash_sorted:
-    r = st.columns([3, 3, 2, 2])
-    with r[0]:
-        st.write(name)
-    with r[1]:
-        st.write(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(item["deleted_at"])))
-    with r[2]:
-        if st.button("↩️", key=f"restore_{name}", help="Restore"):
-            codes = load_codes()
-            used = {n.lower() for n in codes}
-            new_name = unique_name(name, used)
-            codes[new_name] = {"secret": item["secret"], "countdown_time": item["countdown_time"]}
-            write_codes(codes)
-            del trash[name]
-            write_trash(trash)
-            st.success(f"Restored '{new_name}'")
-            st.rerun()
-    with r[3]:
-        if st.button("🧹", key=f"purge_{name}", help="Delete permanently"):
-            del trash[name]
-            write_trash(trash)
-            st.success("Deleted permanently.")
-            st.rerun()
+if __name__ == "__main__":
+    main()
