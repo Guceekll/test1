@@ -1,56 +1,49 @@
-import base64
-import pyotp
-import hashlib
+import streamlit as st
+import os
+from code_shared import local_css, CSS_PATH, render_sidebar
 
-def generate_token_secret(key):
-    """
-    为给定的 key 生成稳定的 TOTP Secret
-    
-    Args:
-        key (str): 原始密钥
-    
-    Returns:
-        str: 用于 TOTP 的 Base32 Secret
-    """
-    # 如果已经是有效的 Base32，直接返回
-    if is_valid_base32(key):
-        return key
-    
-    # 对 key 进行哈希处理，生成一个稳定的密钥
-    hash_obj = hashlib.sha256(str(key).encode('utf-8'))
-    hex_digest = hash_obj.hexdigest()
-    
-    # 将哈希值转换为 Base32
-    base32_secret = base64.b32encode(bytes.fromhex(hex_digest)).decode('utf-8').rstrip('=')
-    
-    # 确保长度为16个字符（TOTP 的标准长度）
-    base32_secret = (base32_secret + base32_secret)[:16]
-    
-    return base32_secret
+CODE_FILE = "./code.txt"
 
-def text_to_base32(text):
-    """
-    Convert input to Base32 encoding
-    
-    Args:
-        text (str): Input to be converted
-    
-    Returns:
-        str: Base32 encoded string
-    """
-    return generate_token_secret(text)
+def save_code(name, key, countdown_time):
+    if not os.path.exists(CODE_FILE):
+        with open(CODE_FILE, "w", encoding="utf-8") as f:
+            f.write("name,key,time\n")
 
-def is_valid_base32(text):
-    """
-    检查给定文本是否为有效的 Base32 字符串
-    
-    Args:
-        text (str): 待验证的文本
-    
-    Returns:
-        bool: 是否为有效的 Base32
-    """
-    base32_alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567='
-    
-    # 检查是否只包含 Base32 字符
-    return all(char.upper() in base32_alphabet for char in text)
+    with open(CODE_FILE, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    existing_names = [line.split(",")[0].strip().lower() for line in lines[1:]]
+    if name.lower() in existing_names:
+        st.error(f"Code with name '{name}' already exists!")
+        return False
+
+    with open(CODE_FILE, "a", encoding="utf-8") as f:
+        f.write(f"{name},{key},{int(countdown_time)}\n")
+
+    st.success(f"Code '{name}' added successfully!")
+    return True
+
+def main():
+    st.set_page_config(page_title="➕ Add Code", page_icon="➕", layout="wide")
+    local_css(CSS_PATH)
+    render_sidebar("sub")
+
+    st.title("➕ Add New Code")
+
+    name = st.text_input("Code Name", placeholder="e.g., TKL")
+    key = st.text_input("Secret Key", placeholder="e.g., 111")
+    countdown_time = st.number_input(
+        "Countdown Time (seconds)", min_value=15, max_value=60, step=5, value=30
+    )
+
+    save_button = st.button("Save Code")
+
+    if save_button:
+        if name and key and countdown_time:
+            if save_code(name.strip(), key.strip(), countdown_time):
+                st.switch_page("app.py")
+        else:
+            st.warning("Please fill in all fields before saving.")
+
+if __name__ == "__main__":
+    main()
