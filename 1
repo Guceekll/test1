@@ -1,96 +1,58 @@
-.code-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 20px;
-    width: 100%;
-    padding: 20px;
-}
+"""Streamlit page for adding new code entries to the CSV datastore."""
+import os
+import streamlit as st
+from code_shared import local_css, CSS_PATH, render_sidebar
 
-.stContainer {
-    background-color: white;
-    border-radius: 12px;
-    padding: 20px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    transition: transform 0.3s ease;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    height: 250px;
-    justify-content: space-between;
-    margin-bottom: 20px;
-    position: relative;
-}
+# ==== Constants ====
+CODE_FILE = "./code.txt"
 
-.stContainer:hover {
-    transform: scale(1.02);
-}
 
-.code-header {
-    display: flex;
-    justify-content: space-between;
-    width: 100%;
-    margin-bottom: 15px;
-}
+# ==== Storage ====
+def save_code(name: str, key: str, countdown_time: int) -> bool:
+    """Append a new code entry if name is unique (case-insensitive)."""
+    if not os.path.exists(CODE_FILE):
+        with open(CODE_FILE, "w", encoding="utf-8") as f:
+            f.write("name,key,time\n")
 
-.code-label {
-    color: #666;
-    font-size: 16px;
-}
+    with open(CODE_FILE, "r", encoding="utf-8") as f:
+        lines = f.readlines()
 
-.code-value {
-    color: #333;
-    font-size: 36px;
-    font-weight: bold;
-    text-align: center;
-}
+    existing_names = [line.split(",")[0].strip().lower() for line in lines[1:]]
+    if name.lower() in existing_names:
+        st.error(f"Code with name '{name}' already exists!")
+        return False
 
-.circular-progress {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    background-color: #f0f0f0;
-    overflow: hidden;
-}
+    with open(CODE_FILE, "a", encoding="utf-8") as f:
+        f.write(f"{name},{key},{int(countdown_time)}\n")
 
-.circular-progress-bar {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    border-radius: 50%;
-    transition: background 0.5s linear;
-}
+    st.success(f"Code '{name}' added successfully!")
+    return True
 
-.circular-progress-text {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 2;
-    color: #333;
-    font-size: 12px;
-    font-weight: bold;
-}
 
-.code-next {
-    color: #666;
-    font-size: 14px;
-    margin-top: 10px;
-}
+# ==== Page Entrypoint ====
+def main():
+    """Render the 'Add New Code' page and handle create flow."""
+    # Global UI
+    local_css(CSS_PATH)
+    render_sidebar("sub")
+    st.set_page_config(page_title="Add New Code", layout="wide")
+    st.title("➕ Add New Code")
 
-@media (max-width: 1200px) {
-    .stContainer {
-        height: 220px;
-    }
-}
+    # Form inputs
+    name = st.text_input("Code Name", placeholder="e.g., TKL")
+    key = st.text_input("Secret Key", placeholder="e.g., 111")
+    countdown_time = st.number_input(
+        "Countdown Time (seconds)", min_value=15, max_value=60, step=5, value=30
+    )
 
-@media (max-width: 768px) {
-    .stContainer {
-        height: 200px;
-        padding: 15px;
-    }
-}
+    # Persist on click
+    if st.button("Save Code"):
+        if name and key and countdown_time:
+            if save_code(name.strip(), key.strip(), int(countdown_time)):
+                st.switch_page("app.py")
+        else:
+            st.warning("Please fill in all fields before saving.")
+
+
+if __name__ == "__main__":
+    main()
