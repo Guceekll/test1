@@ -1,18 +1,36 @@
-import os
-from dotenv import load_dotenv
-import openai
-
-load_dotenv()
-
-_client = openai.OpenAI(
-    base_url=os.getenv("OPENAI_BASE_URL"),
-    api_key=os.getenv("OPENAI_API_KEY"),
+PROMPT_GENERATE_QUERY_NOHIST = (
+    "ユーザーの知りたいこと：{user_input}\n"
+    "具体的な検索クエリを2つ作ってください。出力は番号付きのみ。\n"
+    "1. {{クエリ1}}\n2. {{クエリ2}}"
 )
-_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 
-def llm(prompt: str) -> str:
-    resp = _client.chat.completions.create(
-        model=_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return resp.choices[0].message.content.strip()
+PROMPT_GENERATE_QUERY_WITH_HIST = (
+    "ユーザーの知りたいこと：{user_input}\n"
+    "過去のクエリ：\n{query_history}\n"
+    "重複を避け、さらに具体的な検索クエリを2つ。出力は番号付きのみ。\n"
+    "1. {{クエリ1}}\n2. {{クエリ2}}"
+)
+
+PROMPT_EVALUATE_INFO = (
+    "ユーザーの知りたいこと：{user_input}\n"
+    "検索結果の要約：\n{info_qvics}\n"
+    "各結果を『信頼性・関連性・有用性・明確性・網羅性』で短評し、最後に総合評価を Good/Bad で一語。"
+)
+
+PROMPT_REFINE_INFO = (
+    "提供情報と評価：\n{evaluate_info}\n"
+    "ユーザーに最も役立つ情報のみ選抜し、理由付き箇条書きで：\n"
+    "【提供情報】"
+)
+
+PROMPT_GENERATE_REPORT = (
+    "ユーザーの知りたいこと：{user_input}\n"
+    "選抜情報：\n{refine_info}\n"
+    "これに基づき、最終回答を日本語で簡潔に作成。"
+)
+
+PROMPT_OPTIMIZER = (
+    "ユーザーの知りたいこと：{user_input}\n"
+    "現時点の回答：\n{report}\n"
+    "十分なら『Good』、不足なら『Bad』のみ出力。"
+)
