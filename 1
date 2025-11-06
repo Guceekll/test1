@@ -1,46 +1,11 @@
-import re
-from typing import Callable, List, Dict, Any
-from .client import llm
-from .prompts import *
-from .types import TroubleState
+# config.py
+import os
+import openai
+from dotenv import load_dotenv
 
-def generate_query(state: TroubleState) -> TroubleState:
-    if state.query_history:
-        prompt = PROMPT_GENERATE_QUERY_WITH_HIST.format(
-            user_input=state.user_input,
-            query_history="\n".join(f"- {q}" for q in state.query_history),
-        )
-    else:
-        prompt = PROMPT_GENERATE_QUERY_NOHIST.format(user_input=state.user_input)
-    raw = llm(prompt)
-    items = [i.strip() for i in re.split(r"^\s*\d+\.\s*", raw, flags=re.M) if i.strip()]
-    state.queries = items[:2] if items else [raw.strip()]
-    state.query_history.extend(state.queries)
-    return state
+load_dotenv()
 
-def collect_info_qvics(state: TroubleState, search_fn: Callable[[str|List[str]], List[Dict[str,Any]]]) -> TroubleState:
-    if not state.queries: return state
-    state.info_qvics = search_fn(state.queries if len(state.queries)>1 else state.queries[0]) or []
-    return state
-
-def evaluate_info(state: TroubleState) -> TroubleState:
-    compact = []
-    for i, r in enumerate(state.info_qvics, 1):
-        compact.append(f"[{i}] {r.get('title') or r.get('id')}: {(r.get('snippet') or r.get('text') or '')[:500]}")
-    state.evaluate_info = llm(PROMPT_EVALUATE_INFO.format(
-        user_input=state.user_input, info_qvics="\n".join(compact) or "(なし)"
-    ))
-    return state
-
-def refine_info(state: TroubleState) -> TroubleState:
-    state.refine_info = llm(PROMPT_REFINE_INFO.format(evaluate_info=state.evaluate_info))
-    return state
-
-def generate_report(state: TroubleState) -> TroubleState:
-    state.report = llm(PROMPT_GENERATE_REPORT.format(user_input=state.user_input, refine_info=state.refine_info))
-    return state
-
-def optimizer(state: TroubleState) -> TroubleState:
-    decision = llm(PROMPT_OPTIMIZER.format(user_input=state.user_input, report=state.report))
-    state.optimizer_decision = decision.strip().split()[0]
-    return state
+client = openai.OpenAI(
+    base_url=os.getenv("OPENAI_BASE_URL"),
+    api_key=os.getenv("OPENAI_API_KEY"),
+)
