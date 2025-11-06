@@ -1,3 +1,18 @@
-streamlit>=1.35.0
-pyotp>=2.9.0
-pandas>=2.2.2
+import os
+from dotenv import load_dotenv
+import openai
+
+load_dotenv()
+
+_client = openai.OpenAI(
+    base_url=os.getenv("OPENAI_BASE_URL"),
+    api_key=os.getenv("OPENAI_API_KEY"),
+)
+_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+
+def llm(prompt: str) -> str:
+    resp = _client.chat.completions.create(
+        model=_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return resp.choices[0].message.content.strip()
