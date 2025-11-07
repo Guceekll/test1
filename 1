@@ -1,11 +1,10 @@
-# config.py
-import os
-import openai
-from dotenv import load_dotenv
-
-load_dotenv()
-
-client = openai.OpenAI(
-    base_url=os.getenv("OPENAI_BASE_URL"),
-    api_key=os.getenv("OPENAI_API_KEY"),
-)
+# state.py
+class TroubleState(dict):
+    user_input: str
+    query_history: list
+    query: str
+    info_qvics: list
+    evaluate_info: list
+    refine_info: str
+    report: str
+    optimizer_decision: str
