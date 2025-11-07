@@ -1,38 +1,30 @@
-# workflow.py
-from langgraph.graph import StateGraph, END
-from .state import TroubleState
+# main.py
+from .workflow import build_workflow
 from .nodes import (
     generate_query, collect_info_qvics,
     evaluate_info, refine_info,
     generate_report, optimizer
 )
+from .state import TroubleState
 
-def build_workflow():
-    workflow = StateGraph(TroubleState)
+if __name__ == "__main__":
+    user_input = input("あなたの知りたいことを入力してね〜🧠：")
+    state = {"user_input": user_input}
 
-    workflow.add_node("クエリ生成", generate_query)
-    workflow.add_node("情報収集_QVICS", collect_info_qvics)
-    workflow.add_node("情報評価", evaluate_info)
-    workflow.add_node("情報精選", refine_info)
-    workflow.add_node("回答生成", generate_report)
-    workflow.add_node("回答評価", optimizer)
+    state = generate_query(state)
+    print("[検索クエリ生成]\n", state.get("query", ""))
 
-    workflow.set_entry_point("クエリ生成")
+    state = collect_info_qvics(state)
+    print("[情報収集_QVICS]\n", state.get("info_qvics", []))
 
-    workflow.add_edge("クエリ生成", "情報収集_QVICS")
-    workflow.add_edge("情報収集_QVICS", "情報評価")
+    state = evaluate_info(state)
+    print("[情報評価]\n", state.get("evaluate_info", ""))
 
-    workflow.add_conditional_edges("情報評価", {
-        "情報精選": lambda s: "Good" in s.get("evaluate_info", ""),
-        "クエリ生成": lambda s: "Bad" in s.get("evaluate_info", ""),
-    })
+    state = refine_info(state)
+    print("[情報精選]\n", state.get("refine_info", ""))
 
-    workflow.add_edge("情報精選", "回答生成")
-    workflow.add_edge("回答生成", "回答評価")
+    state = generate_report(state)
+    print("[回答生成]\n", state.get("report", ""))
 
-    workflow.add_conditional_edges("回答評価", {
-        END: lambda s: "Good" in s.get("optimizer_decision", ""),
-        "クエリ生成": lambda s: "Bad" in s.get("optimizer_decision", ""),
-    })
-
-    return workflow.compile()
+    state = optimizer(state)
+    print("[回答評価]\n", state.get("optimizer_decision", ""))
