@@ -1,10 +1,32 @@
-# state.py
-class TroubleState(dict):
-    user_input: str
-    query_history: list
-    query: str
-    info_qvics: list
-    evaluate_info: list
-    refine_info: str
-    report: str
-    optimizer_decision: str
+# nodes.py
+import re
+from concurrent.futures import ThreadPoolExecutor
+from .config import client
+from .state import TroubleState
+from embeddings import search_collection
+
+# ======== 函数保持原样 ========
+
+def generate_query(state):
+    # 你的原始逻辑完整复制，不改任何内容
+    ...
+
+def collect_info_qvics(state):
+    # 原样
+    ...
+
+def evaluate_info(state):
+    # 原样
+    ...
+
+def refine_info(state):
+    # 原样
+    ...
+
+def generate_report(state):
+    # 原样
+    ...
+
+def optimizer(state):
+    # 原样
+    ...
