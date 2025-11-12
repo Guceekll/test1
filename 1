@@ -1,30 +1,58 @@
-# main.py
-from .workflow import build_workflow
-from .nodes import (
-    generate_query, collect_info_qvics,
-    evaluate_info, refine_info,
-    generate_report, optimizer
-)
-from .state import TroubleState
+"""Streamlit page for adding new code entries (NEW schema)."""
+import os
+import streamlit as st
+from code_shared import local_css, CSS_PATH, render_sidebar
+
+# ==== Constants ====
+CODE_FILE = "./code.txt"
+HEADER = "name,key,time,memo\n"
+
+
+# ==== Storage ====
+def ensure_file():
+    if not os.path.exists(CODE_FILE):
+        with open(CODE_FILE, "w", encoding="utf-8") as f:
+            f.write(HEADER)
+
+def save_code(name: str, key: str, countdown_time: int, memo: str) -> bool:
+    """Append a new code entry if name is unique (case-insensitive)."""
+    ensure_file()
+    with open(CODE_FILE, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    existing = [line.split(",")[0].strip().lower() for line in lines[1:]]
+    if name.lower() in existing:
+        st.error(f"Code with name '{name}' already exists!")
+        return False
+
+    memo_safe = (memo or "").replace("\n", " ").replace("\r", " ").replace(",", "，")
+    with open(CODE_FILE, "a", encoding="utf-8") as f:
+        f.write(f"{name},{key},{int(countdown_time)},{memo_safe}\n")
+    st.success(f"Code '{name}' added successfully!")
+    return True
+
+
+# ==== Page Entrypoint ====
+def main():
+    """Render the 'Add New Code' page and handle create flow."""
+    local_css(CSS_PATH)
+    render_sidebar("sub")
+    st.set_page_config(page_title="Add New Code", layout="wide")
+    st.title("➕ Add New Code")
+
+    name = st.text_input("Code Name", placeholder="e.g., TKL", key="add_name")
+    key  = st.text_input("Secret Key", placeholder="e.g., 111", key="add_key")
+    countdown_time = st.number_input(
+        "Countdown Time (seconds)", min_value=15, max_value=60, step=5, value=30, key="add_cd"
+    )
+    memo = st.text_input("Memo", placeholder="No memo", key="add_memo")
+
+    if st.button("Save Code", key="add_save"):
+        if name and key and countdown_time:
+            if save_code(name.strip(), key.strip(), int(countdown_time), memo.strip()):
+                st.switch_page("app.py")
+        else:
+            st.warning("Please fill in all fields before saving.")
+
 
 if __name__ == "__main__":
-    user_input = input("あなたの知りたいことを入力してね〜🧠：")
-    state = {"user_input": user_input}
-
-    state = generate_query(state)
-    print("[検索クエリ生成]\n", state.get("query", ""))
-
-    state = collect_info_qvics(state)
-    print("[情報収集_QVICS]\n", state.get("info_qvics", []))
-
-    state = evaluate_info(state)
-    print("[情報評価]\n", state.get("evaluate_info", ""))
-
-    state = refine_info(state)
-    print("[情報精選]\n", state.get("refine_info", ""))
-
-    state = generate_report(state)
-    print("[回答生成]\n", state.get("report", ""))
-
-    state = optimizer(state)
-    print("[回答評価]\n", state.get("optimizer_decision", ""))
+    main()
