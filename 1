@@ -1,56 +1,177 @@
-"""Utility module for generating and validating Base32 secrets (Proton manual input compatible)."""
-import base64
-import re
+"""Shared helpers for the Streamlit 2FA app: CSS loading, file I/O, TOTP rendering, and sidebar."""
+import os
+import time
+import hashlib
+import streamlit as st
+import pyotp
+from typing import Optional
+from base32_converter import is_valid_base32, as_base32_secret
 
-# Base32 alphabet (uppercase letters + digits 2-7)
-_B32_ALPHABET = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
+CSS_PATH = "style.css"
+CODE_FILE = "code.txt"
 
-
-def is_valid_base32(text: str) -> bool:
-    """Return True if `text` can be Base32-decoded (tolerates missing padding and spaces)."""
-    if not text or not text.strip():
-        return False
-    t = normalize_base32(text)
-    try:
-        base64.b32decode(t + "=" * ((8 - len(t) % 8) % 8))
-        return True
-    except Exception:
-        return False
+# Proton-compatible defaults (manual input mode)
+TOTP_DIGITS = 6
+TOTP_DIGEST = hashlib.sha1
+TOTP_FALLBACK_PERIOD = 30
 
 
-def normalize_base32(text: str) -> str:
-    """Strip whitespace and uppercase only; do NOT change byte meaning."""
-    return re.sub(r"\s+", "", text or "").upper().rstrip("=")
+# ==== Styles ====
+def local_css(file_name: str) -> None:
+    """Inject a local CSS file if present."""
+    if os.path.exists(file_name):
+        with open(file_name, "r", encoding="utf-8") as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 
-def looks_like_base32(s: str) -> bool:
-    """True if all chars are from Base32 alphabet."""
-    return len(s) > 0 and all(ch in _B32_ALPHABET for ch in s)
-
-
-def b32_from_utf8(s: str) -> str:
-    """Fallback: encode raw UTF-8 bytes into Base32 (no '=' padding)."""
-    raw = s.encode("utf-8")
-    return base64.b32encode(raw).decode("ascii").rstrip("=")
-
-
-def as_base32_secret(user_input: str) -> str:
+# ==== Data loading ====
+def load_code_from_file() -> dict:
     """
-    Proton manual input rules:
-      1) If input looks like Base32 AND length >= 16 → treat as Base32.
-      2) Otherwise → treat the raw text as UTF-8 bytes and Base32-encode it.
-    Returns Base32 without '=' padding.
-    """
-    s = (user_input or "").strip()
-    t = normalize_base32(s)
+    Load 'code.txt' → {name: {'secret': str, 'countdown_time': int}}.
 
-    # Case 1: "long enough" Base32-like input
-    if looks_like_base32(t) and len(t) >= 16:
+    Expected CSV: name,key,time[,memo]
+    - The 4th column (memo) is ignored by this module.
+    - If time cannot be parsed, fallback to 30 seconds.
+    """
+    code = {}
+    if not os.path.exists(CODE_FILE):
+        return code
+
+    with open(CODE_FILE, "r", encoding="utf-8") as f:
+        # Skip header line
         try:
-            base64.b32decode(t + "=" * ((8 - len(t) % 8) % 8))
-            return t  # already normalized
-        except Exception:
-            pass  # fall through to UTF-8 fallback
+            next(f)
+        except StopIteration:
+            return code
 
-    # Case 2: everything else → UTF-8 fallback
-    return b32_from_utf8(s)
+        for line in f:
+            parts = [p.strip() for p in line.strip().split(",")]
+            if len(parts) < 2:
+                continue
+
+            name = parts[0]
+            secret = parts[1]
+
+            # Parse period or fallback to 30s
+            if len(parts) >= 3 and parts[2]:
+                try:
+                    interval = int(parts[2])
+                except Exception:
+                    interval = TOTP_FALLBACK_PERIOD
+            else:
+                interval = TOTP_FALLBACK_PERIOD
+
+            code[name] = {"secret": secret, "countdown_time": interval}
+
+    return code
+
+
+# ==== TOTP helpers ====
+def _default_state(now: int, period: int) -> dict:
+    """Neutral fallback state used when TOTP generation fails."""
+    return {
+        "period": now - (now % period),
+        "current": "000000",
+        "next": "000000",
+    }
+
+
+def generate_code(secret: str, period: int, now: int, force_default: bool = False) -> dict:
+    """
+    Generate a TOTP code using Proton-compatible secret rules:
+      - Long Base32-like input → Base32 secret
+      - Everything else → UTF-8 → Base32
+    """
+    try:
+        if force_default:
+            return _default_state(now, period)
+
+        b32 = as_base32_secret(secret)
+
+        if not is_valid_base32(b32):
+            return _default_state(now, period)
+
+        totp = pyotp.TOTP(
+            b32,
+            interval=period,
+            digits=TOTP_DIGITS,
+            digest=TOTP_DIGEST,
+        )
+
+        start = now - (now % period)
+        return {
+            "period": start,
+            "current": totp.at(now),
+            "next": totp.at(start + period),
+        }
+
+    except Exception as e:
+        print(f"[TOTP error] secret '{secret}': {e}")
+        return _default_state(now, period)
+
+
+def calculate_remaining_time(period: int, now: Optional[int] = None) -> int:
+    """Seconds left until the current TOTP window ends."""
+    if now is None:
+        now = int(time.time())
+    start = now - (now % period)
+    return period - (now - start)
+
+
+# ==== UI Rendering ====
+def render_code_card(label: str, code_data: dict, current_time: int, full_width: bool = False) -> None:
+    """Render a single code tile with circular time-progress."""
+    remaining_time = calculate_remaining_time(code_data["countdown_time"], current_time)
+    code = generate_code(code_data["secret"], code_data["countdown_time"], current_time)
+    degrees = (remaining_time / code_data["countdown_time"]) * 360
+    progress_color = "#4CAF50" if remaining_time > 5 else "#FF5722"
+
+    card_html = f"""
+    <div class="stContainer" style="{'width: 100%;' if full_width else ''}">
+        <div class="code-header"><div class="code-label">{label}</div></div>
+        <div class="code-value">{code['current']}</div>
+        <div class="circular-progress">
+            <div class="circular-progress-bar"
+                 style="background: conic-gradient({progress_color} {degrees}deg, #e0e0e0 {degrees}deg)"></div>
+            <div class="circular-progress-text">{remaining_time}</div>
+        </div>
+        <div class="code-next">Next: {code['next']}</div>
+    </div>
+    """
+    if full_width:
+        st.columns(1)[0].markdown(card_html, unsafe_allow_html=True)
+    else:
+        st.markdown(card_html, unsafe_allow_html=True)
+
+
+# ==== Sidebar ====
+def _sidebar_user_box() -> None:
+    """Render a small user panel in the sidebar."""
+    user = st.session_state.get("user", {})
+    name = user.get("name", "Guest")
+    avatar_emoji = user.get("avatar_emoji", "👤")
+
+    st.markdown(
+        f"""
+        <div class="user-box">
+            <div class="user-avatar">{avatar_emoji}</div>
+            <div class="user-name"><strong>{name}</strong></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_sidebar(current: str) -> None:
+    """Render left navigation; emphasize the current page."""
+    with st.sidebar:
+        _sidebar_user_box()
+        st.markdown("---")
+        if current == "home":
+            st.page_link("app.py",               label="🏠 Home")
+            st.page_link("pages/search.py",      label="🔎 Search Code")
+            st.page_link("pages/add_code.py",    label="➕ Add New Code")
+            st.page_link("pages/edit_code.py",   label="✏️ Edit Code")
+            st.page_link("pages/recycle_bin.py", label="🗑️ Recycle bin")
+        else:
+            st.page_link("app.py",               label="🏠 Back to Home")
