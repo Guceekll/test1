@@ -1,176 +1,56 @@
-"""Streamlit page for restoring or permanently deleting items from recycle bin (with memo)."""
-import os
-import time
-import streamlit as st
-from code_shared import local_css, CSS_PATH, render_sidebar
+"""Utility module for generating and validating Base32 secrets (Proton manual input compatible)."""
+import base64
+import re
 
-# ==== Files & Headers (NEW SCHEMA, NO BACKCOMPAT) ====
-CODE_FILE = "./code.txt"
-TRASH_PATH = "./code_trash.txt"
-
-HEADER = "name,key,time,memo\n"
-TRASH_HEADER = "name,key,time,memo,deleted_at\n"
+# Base32 alphabet (uppercase letters + digits 2-7)
+_B32_ALPHABET = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
 
 
-# ==== Storage Helpers ====
-def ensure_file(path: str, header: str) -> None:
-    """Ensure a CSV file exists and starts with the given header."""
-    if not os.path.exists(path):
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(header)
+def is_valid_base32(text: str) -> bool:
+    """Return True if `text` can be Base32-decoded (tolerates missing padding and spaces)."""
+    if not text or not text.strip():
+        return False
+    t = normalize_base32(text)
+    try:
+        base64.b32decode(t + "=" * ((8 - len(t) % 8) % 8))
+        return True
+    except Exception:
+        return False
 
 
-def _sanitize_memo(s: str) -> str:
-    """Prevent CSV line breaks / commas from breaking rows."""
-    return (s or "").replace("\n", " ").replace("\r", " ").replace(",", "，")
+def normalize_base32(text: str) -> str:
+    """Strip whitespace and uppercase only; do NOT change byte meaning."""
+    return re.sub(r"\s+", "", text or "").upper().rstrip("=")
 
 
-# ---------- TRASH ----------
-def load_trash() -> dict:
-    """Load recycle bin into {name: {'secret','countdown_time','memo','deleted_at'}}."""
-    ensure_file(TRASH_PATH, TRASH_HEADER)
-    data = {}
-    with open(TRASH_PATH, "r", encoding="utf-8") as f:
-        for line in f.readlines()[1:]:
-            parts = [p.strip() for p in line.strip().split(",")]
-            if len(parts) >= 5:
-                name, key, t, memo, deleted_at = parts[:5]
-                try:
-                    t = int(t)
-                except Exception:
-                    t = 30
-                try:
-                    deleted_at = int(deleted_at)
-                except Exception:
-                    deleted_at = int(time.time())
-                data[name] = {
-                    "secret": key,
-                    "countdown_time": t,
-                    "memo": memo,
-                    "deleted_at": deleted_at,
-                }
-    return data
+def looks_like_base32(s: str) -> bool:
+    """True if all chars are from Base32 alphabet."""
+    return len(s) > 0 and all(ch in _B32_ALPHABET for ch in s)
 
 
-def write_trash(data: dict) -> None:
-    """Rewrite the entire trash file from the given dict."""
-    ensure_file(TRASH_PATH, TRASH_HEADER)
-    with open(TRASH_PATH, "w", encoding="utf-8") as f:
-        f.write(TRASH_HEADER)
-        for name, item in data.items():
-            memo_safe = _sanitize_memo(item.get("memo", ""))
-            f.write(
-                f"{name},{item.get('secret','')},{int(item.get('countdown_time',30))},"
-                f"{memo_safe},{int(item.get('deleted_at', int(time.time())))}\n"
-            )
+def b32_from_utf8(s: str) -> str:
+    """Fallback: encode raw UTF-8 bytes into Base32 (no '=' padding)."""
+    raw = s.encode("utf-8")
+    return base64.b32encode(raw).decode("ascii").rstrip("=")
 
 
-# ---------- MAIN LIST ----------
-def load_codes() -> dict:
-    """Load active codes into {name: {'secret','countdown_time','memo'}}."""
-    ensure_file(CODE_FILE, HEADER)
-    data = {}
-    with open(CODE_FILE, "r", encoding="utf-8") as f:
-        for line in f.readlines()[1:]:
-            parts = [p.strip() for p in line.strip().split(",")]
-            if len(parts) >= 4:
-                name, key, t, memo = parts[:4]
-                try:
-                    t = int(t)
-                except Exception:
-                    t = 30
-                data[name] = {"secret": key, "countdown_time": t, "memo": memo}
-    return data
+def as_base32_secret(user_input: str) -> str:
+    """
+    Proton manual input rules:
+      1) If input looks like Base32 AND length >= 16 → treat as Base32.
+      2) Otherwise → treat the raw text as UTF-8 bytes and Base32-encode it.
+    Returns Base32 without '=' padding.
+    """
+    s = (user_input or "").strip()
+    t = normalize_base32(s)
 
+    # Case 1: "long enough" Base32-like input
+    if looks_like_base32(t) and len(t) >= 16:
+        try:
+            base64.b32decode(t + "=" * ((8 - len(t) % 8) % 8))
+            return t  # already normalized
+        except Exception:
+            pass  # fall through to UTF-8 fallback
 
-def write_codes(data: dict) -> None:
-    """Rewrite the main file from the given dict."""
-    ensure_file(CODE_FILE, HEADER)
-    with open(CODE_FILE, "w", encoding="utf-8") as f:
-        f.write(HEADER)
-        for name, item in data.items():
-            memo_safe = _sanitize_memo(item.get("memo", ""))
-            f.write(f"{name},{item['secret']},{int(item['countdown_time'])},{memo_safe}\n")
-
-
-def unique_name(base: str, used_lower: set) -> str:
-    """Generate a unique name by suffixing _restored{n} if a conflict exists."""
-    name = base
-    i = 1
-    while name.lower() in used_lower:
-        name = f"{base}_restored{i}"
-        i += 1
-    return name
-
-
-# ==== Page Entrypoint ====
-def main():
-    """Render the recycle bin with restore and purge actions."""
-    # Global UI
-    local_css(CSS_PATH)
-    render_sidebar("sub")
-    st.set_page_config(page_title="Recycle Bin", layout="wide")
-    st.title("🗑️ Recycle Bin")
-
-    # Read trash; bail out if empty
-    trash = load_trash()
-    if not trash:
-        st.info("Recycle Bin is empty.")
-        st.stop()
-
-    # Bulk action
-    if st.button("🗑️ Empty Bin", use_container_width=True):
-        write_trash({})
-        st.success("Recycle Bin emptied.")
-        st.rerun()
-
-    # Table header
-    hdr = st.columns([3, 3, 2, 2])
-    with hdr[0]:
-        st.markdown("**Name**")
-    with hdr[1]:
-        st.markdown("**Deleted At**")
-    with hdr[2]:
-        st.markdown("**Restore**")
-    with hdr[3]:
-        st.markdown("**Delete**")
-
-    # Rows by most-recent deletion first
-    trash_sorted = sorted(trash.items(), key=lambda x: x[1]["deleted_at"], reverse=True)
-    for name, item in trash_sorted:
-        r = st.columns([3, 3, 2, 2])
-
-        with r[0]:
-            st.write(name)
-
-        with r[1]:
-            st.write(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(item["deleted_at"])))
-
-        # Restore: move back to main list (ensure unique name)
-        with r[2]:
-            if st.button("↩️", key=f"restore_{name}", help="Restore"):
-                codes = load_codes()
-                used = {n.lower() for n in codes}
-                new_name = unique_name(name, used)
-                codes[new_name] = {
-                    "secret": item["secret"],
-                    "countdown_time": item["countdown_time"],
-                    "memo": item.get("memo", ""),
-                }
-                write_codes(codes)
-                del trash[name]
-                write_trash(trash)
-                st.success(f"Restored '{new_name}'")
-                st.rerun()
-
-        # Purge: permanently remove from trash
-        with r[3]:
-            if st.button("🧹", key=f"purge_{name}", help="Delete permanently"):
-                del trash[name]
-                write_trash(trash)
-                st.success("Deleted permanently.")
-                st.rerun()
-
-
-if __name__ == "__main__":
-    main()
+    # Case 2: everything else → UTF-8 fallback
+    return b32_from_utf8(s)
