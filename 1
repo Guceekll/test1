@@ -1,57 +1,240 @@
-"""Streamlit page for adding new code entries (NEW schema)."""
+"""Streamlit page for searching, editing, and deleting code entries (new format)."""
 import os
+import time
 import streamlit as st
+from typing import Dict
 from code_shared import local_css, CSS_PATH, render_sidebar
 
-# ==== Constants ====
+# ==== Files & Headers (NEW FORMAT) ====
 CODE_FILE = "./code.txt"
 HEADER = "name,key,time,memo\n"
 
+TRASH_PATH = "./code_trash.txt"
+TRASH_HEADER = "name,key,time,memo,deleted_at\n"
+
 
 # ==== Storage ====
-def ensure_file():
-    if not os.path.exists(CODE_FILE):
-        with open(CODE_FILE, "w", encoding="utf-8") as f:
-            f.write(HEADER)
+def ensure_file(path: str, header: str) -> None:
+    if not os.path.exists(path):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(header)
 
-def save_code(name: str, key: str, countdown_time: int, memo: str) -> bool:
-    """Append a new code entry if name is unique (case-insensitive)."""
-    ensure_file()
+def load_codes() -> Dict[str, Dict]:
+    """Return {name: {'secret': str, 'countdown_time': int, 'memo': str}}."""
+    ensure_file(CODE_FILE, HEADER)
+    data: Dict[str, Dict] = {}
     with open(CODE_FILE, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-    existing = [line.split(",")[0].strip().lower() for line in lines[1:]]
-    if name.lower() in existing:
-        st.error(f"Code with name '{name}' already exists!")
-        return False
+        for line in f.readlines()[1:]:
+            parts = [p.strip() for p in line.rstrip("\n").split(",")]
+            if len(parts) >= 4:
+                name, key, t, memo = parts[:4]
+                try:
+                    t = int(t)
+                except Exception:
+                    t = 30
+                data[name] = {"secret": key, "countdown_time": t, "memo": memo}
+    return data
 
-    memo_safe = (memo or "").replace("\n", " ").replace("\r", " ").replace(",", "，")
-    with open(CODE_FILE, "a", encoding="utf-8") as f:
-        f.write(f"{name},{key},{int(countdown_time)},{memo_safe}\n")
-    st.success(f"Code '{name}' added successfully!")
-    return True
+def write_codes(codes: Dict[str, Dict]) -> None:
+    ensure_file(CODE_FILE, HEADER)
+    with open(CODE_FILE, "w", encoding="utf-8") as f:
+        f.write(HEADER)
+        for name, item in codes.items():
+            memo = (item.get("memo", "") or "").replace("\n", " ").replace("\r", " ").replace(",", "，")
+            f.write(f"{name},{item['secret']},{int(item['countdown_time'])},{memo}\n")
+
+def append_to_trash(name: str, item: Dict) -> None:
+    ensure_file(TRASH_PATH, TRASH_HEADER)
+    memo = (item.get("memo", "") or "").replace("\n", " ").replace("\r", " ").replace(",", "，")
+    with open(TRASH_PATH, "a", encoding="utf-8") as f:
+        f.write(f"{name},{item.get('secret','')},{int(item.get('countdown_time',30))},{memo},{int(time.time())}\n")
 
 
-# ==== Page Entrypoint ====
+# ==== Utils ====
+def _clean(s: str) -> str:
+    return (s or "").strip()
+
+def _invalid_csv_chars(s: str) -> bool:
+    return any(c in s for c in [",", "\n", "\r"])
+
+def _mask_secret(s: str) -> str:
+    s = s or ""
+    return s if len(s) <= 6 else f"{s[:4]}…{s[-2:]}"
+
+
+# ==== Page ====
 def main():
-    """Render the 'Add New Code' page and handle create flow."""
     local_css(CSS_PATH)
     render_sidebar("sub")
-    st.set_page_config(page_title="Add New Code", layout="wide")
-    st.title("➕ Add New Code")
+    st.set_page_config(page_title="Edit Codes", layout="wide")
+    st.title("✏️ Edit Codes")
 
-    name = st.text_input("Code Name", placeholder="e.g., TKL", key="add_name")
-    key  = st.text_input("Secret Key", placeholder="e.g., 111", key="add_key")
-    countdown_time = st.number_input(
-        "Countdown Time (seconds)", min_value=15, max_value=60, step=5, value=30, key="add_cd"
-    )
-    memo = st.text_input("Memo", placeholder="No memo", key="add_memo")
+    st.session_state.setdefault("edit_search", "")
+    st.session_state.setdefault("editing_row", "")
+    st.session_state.setdefault("deleting_row", "")
+    st.session_state.setdefault("row_alert", {"name": "", "type": "", "text": ""})
 
-    if st.button("Save Code", key="add_save"):
-        if name and key and countdown_time:
-            if save_code(name.strip(), key.strip(), int(countdown_time), memo.strip()):
-                st.switch_page("app.py")
-        else:
-            st.warning("Please fill in all fields before saving.")
+    def set_row_alert(row_name: str, typ: str, text: str) -> None:
+        st.session_state["row_alert"] = {"name": row_name, "type": typ, "text": text}
+
+    def clear_row_alert() -> None:
+        st.session_state["row_alert"] = {"name": "", "type": "", "text": ""}
+
+    # Search bar
+    c1, c2 = st.columns([6, 1])
+    with c1:
+        query = st.text_input("Search by name", key="edit_search", placeholder="e.g., TEL")
+    with c2:
+        st.markdown("<div style='height:1.8em'></div>", unsafe_allow_html=True)
+        if st.button("Search"):
+            st.rerun()
+    term = _clean(query).lower()
+
+    # Load / filter
+    codes = load_codes()
+    names = sorted([n for n in codes.keys() if (term in n.lower())], key=str.lower) if term else sorted(codes.keys(), key=str.lower)
+
+    if not names:
+        st.info("No items found.")
+        return
+
+    # Header
+    hdr = st.columns([3, 5, 2, 2])
+    hdr[0].markdown("**Name**")
+    hdr[1].markdown("**Secret**")
+    hdr[2].markdown("**Countdown**")
+    hdr[3].markdown("**Actions**")
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+
+    for name in names:
+        item = codes[name]
+        row = st.columns([3, 5, 2, 2])
+
+        # === Edit mode ===
+        if st.session_state["editing_row"] == name:
+            with row[0]:
+                new_name = st.text_input("Name", value=name, key=f"nm_edit_{name}", label_visibility="collapsed")
+            with row[1]:
+                st.text_input("Secret", value=item["secret"], key=f"sc_edit_{name}", label_visibility="collapsed", disabled=True)
+            with row[2]:
+                new_cd = st.number_input(
+                    "Countdown",
+                    min_value=15, max_value=60, step=5, value=int(item["countdown_time"]),
+                    key=f"cd_edit_{name}", label_visibility="collapsed",
+                )
+            with row[3]:
+                c_save, c_cancel = st.columns(2)
+                with c_save:
+                    if st.button("💾", key=f"save_{name}", help="Save"):
+                        nn = _clean(new_name)
+                        if not nn:
+                            set_row_alert(name, "error", "Name cannot be empty.")
+                        elif _invalid_csv_chars(nn):
+                            set_row_alert(name, "error", "Name cannot contain commas or newlines.")
+                        elif nn.lower() != name.lower() and any(nn.lower() == n.lower() for n in codes):
+                            set_row_alert(name, "error", f"Name '{nn}' already exists.")
+                        else:
+                            memo_val = st.session_state.get(f"memo_edit_{name}", "")
+                            codes.pop(name)
+                            codes[nn] = {
+                                "secret": item["secret"],
+                                "countdown_time": int(new_cd),
+                                "memo": memo_val,
+                            }
+                            write_codes(codes)
+                            st.session_state["editing_row"] = ""
+                            clear_row_alert()
+                            st.success("Saved.")
+                            st.rerun()
+                with c_cancel:
+                    if st.button("❌", key=f"cancel_{name}", help="Cancel"):
+                        st.session_state["editing_row"] = ""
+                        clear_row_alert()
+                        st.rerun()
+
+            # Memo 
+            st.caption("memo")
+            st.text_input(
+                "Memo",
+                value=item.get("memo", ""),
+                key=f"memo_edit_{name}",
+                placeholder="No memo",
+                label_visibility="collapsed",
+            )
+
+            alert = st.session_state.get("row_alert", {})
+            if alert.get("name") == name and alert.get("text"):
+                if alert.get("type") == "error":
+                    st.error(alert.get("text"))
+                elif alert.get("type") == "info":
+                    st.info(alert.get("text"))
+                else:
+                    st.success(alert.get("text"))
+            continue
+
+        # === Normal mode ===
+        with row[0]:
+            st.write(name)
+        with row[1]:
+            st.write(_mask_secret(item["secret"]))
+        with row[2]:
+            st.write(f"{item['countdown_time']}s")
+        with row[3]:
+            if st.session_state["deleting_row"] != name:
+                c_edit, c_del = st.columns(2)
+                with c_edit:
+                    if st.button("✏️", key=f"edit_{name}", help="Edit this entry"):
+                        st.session_state["editing_row"] = name
+                        st.session_state["deleting_row"] = ""
+                        clear_row_alert()
+                        st.rerun()
+                with c_del:
+                    if st.button("🗑️", key=f"del_{name}", help="Delete this entry"):
+                        st.session_state["deleting_row"] = name
+                        st.session_state["editing_row"] = ""
+                        clear_row_alert()
+                        st.rerun()
+
+        # Memo
+        st.caption("memo")
+        st.text_input(
+            "Memo_view",
+            value=item.get("memo", ""),
+            key=f"memo_view_{name}",
+            placeholder="No memo",
+            label_visibility="collapsed",
+            disabled=True,
+        )
+
+        # Delete comfirm
+        if st.session_state["deleting_row"] == name:
+            col_msg, col_ok, col_cancel = st.columns([10, 1, 1])
+            with col_msg:
+                st.error(f"Delete **{name}**?")
+            with col_ok:
+                if st.button("✅", key=f"confirm_{name}", help="Confirm delete"):
+                    if name in codes:
+                        append_to_trash(name, codes[name])
+                        codes.pop(name, None)
+                        write_codes(codes)
+                    st.session_state["deleting_row"] = ""
+                    clear_row_alert()
+                    st.success("Deleted.")
+                    st.rerun()
+            with col_cancel:
+                if st.button("❌", key=f"cancel_del_{name}", help="Cancel delete"):
+                    st.session_state["deleting_row"] = ""
+                    clear_row_alert()
+                    st.rerun()
+
+        alert = st.session_state.get("row_alert", {})
+        if alert.get("name") == name and alert.get("text"):
+            if alert.get("type") == "error":
+                st.error(alert.get("text"))
+            elif alert.get("type") == "info":
+                st.info(alert.get("text"))
+            else:
+                st.success(alert.get("text"))
 
 
 if __name__ == "__main__":
