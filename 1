@@ -1,0 +1,90 @@
+# auth_sso.py
+"""
+公司 SSO 封装：
+- 只在 app.py 的最开始调用 ensure_sso_login()
+- 其余 pages 只使用已经写好的 st.session_state["user"]
+"""
+
+from typing import Optional
+
+import streamlit as st
+
+from redirect_sso import sso_redirect, set_user_info
+from user_settings import SSOUserData
+
+
+def _sync_user_from_sso() -> None:
+    """
+    把 st.session_state["user_info"] (SSOUserData) 映射到
+    st.session_state["user"]，方便 UI 使用。
+    """
+    sso_user: Optional[SSOUserData] = st.session_state.get("user_info")  # type: ignore
+    if not sso_user:
+        return
+
+    # 这些字段名根据你们 SSO 返回的 JSON 来（和 user_settings.py 对应）
+    name = getattr(sso_user, "displayName", None) or getattr(sso_user, "name", None)
+    email = getattr(sso_user, "mail", None)
+    dept = getattr(sso_user, "department", None)
+    company = getattr(sso_user, "company", None)
+
+    st.session_state["user"] = {
+        "name": name or "User",
+        "email": email,
+        "department": dept,
+        "company": company,
+        "avatar_emoji": "👤",
+        "_sso_raw": sso_user,   # 原始对象保留
+    }
+
+
+def ensure_sso_login() -> None:
+    """
+    只在 app.py 中调用：
+        from auth_sso import ensure_sso_login
+
+        def main():
+            ensure_sso_login()
+            ...
+
+    逻辑：
+    1. 已有 user_info → 同步并返回
+    2. URL 上带 user / t → 视为从 SSO 回调 → 调 set_user_info()
+    3. 其他情况 → 第一次访问 → 调 sso_redirect() 跳转登录
+    """
+    # 1) 已经登录过
+    if "user_info" in st.session_state:
+        _sync_user_from_sso()
+        return
+
+    # 2) 可能是 SSO 回调：URL 上带 user / t
+    params = st.query_params.to_dict()
+    if "user" in params or "t" in params:
+        set_user_info()  # 里面会校验时间、请求员工信息并写入 user_info
+
+        if "user_info" in st.session_state:
+            _sync_user_from_sso()
+            return
+        # set_user_info 内部会在需要时 st.rerun，这里不用处理
+
+    # 3) 第一次访问 → 发起 SSO 跳转
+    st.session_state["user"] = {
+        "name": "Guest",
+        "avatar_emoji": "👤",
+    }
+    sso_redirect()
+    st.stop()
+
+
+def is_authenticated() -> bool:
+    """简单判断是否已经通过 SSO 拿到用户信息。"""
+    return "user_info" in st.session_state
+
+
+def sign_out() -> None:
+    """
+    APP 级别的退出登录：清掉本地 session。
+    （企业 SSO 的真正登出通常由公司门户控制）
+    """
+    for k in ("user", "user_info"):
+        st.session_state.pop(k, None)
