@@ -1,0 +1,947 @@
+dr_api.py
+
+# troubleshooter/dr_api.py
+
+from typing import List, Dict, Any, Optional
+
+# 既存のワークフロー定義をインポート（元コードには手を入れない）
+from . import dr_workflow
+
+
+def _get_app() -> Any:
+    """
+    dr_workflow から実行用の app（ワークフロー）を取得するヘルパー。
+    - dr_workflow.app があればそれを使う
+    - なければ dr_workflow.create_app() があればそれを呼ぶ
+    既存コードに変更を加えずに、なるべく自動で拾うためのロジック。
+    """
+    # パターン1: dr_workflow 内に app という変数が定義されている場合
+    if hasattr(dr_workflow, "app"):
+        return getattr(dr_workflow, "app")
+
+    # パターン2: create_app() というファクトリ関数がある場合
+    if hasattr(dr_workflow, "create_app"):
+        create_app = getattr(dr_workflow, "create_app")
+        if callable(create_app):
+            return create_app()
+
+    # 上記どちらもない場合はエラー
+    raise RuntimeError(
+        "troubleshooter.dr_workflow から実行用 app を取得できませんでした。\n"
+        "dr_workflow 内に `app` 変数 または `create_app()` 関数が定義されているか確認してください。"
+    )
+
+
+def run_troubleshooter(
+    message: str,
+    history: Optional[List[Dict[str, str]]] = None,
+) -> str:
+    """
+    Troubleshooter の統一エントリポイント。
+    - message: 今回ユーザーが入力した質問（1ターン分）
+    - history: これまでの対話履歴（任意）。フォーマット:
+        [{"role": "user" | "assistant", "content": "..."}, ...]
+      ※ main.py の history と同じ形式を想定。
+
+    戻り値:
+        ユーザーへ返すためのトラブルシューティング結果（テキスト）。
+    """
+    app = _get_app()
+
+    # ---- ワークフロー入力の組み立て ----
+    # dr_workflow 側の仕様に合わせて key を調整してください。
+    # 例: 質問を "question" フィールドで渡す想定。
+    payload: Dict[str, Any] = {
+        "question": message,
+    }
+
+    # history を使えるようにしておきたい場合は一緒に渡す
+    # （dr_workflow 側が対応していれば利用される）
+    if history is not None:
+        payload["history"] = history
+
+    # ---- ワークフローの実行 ----
+    # LangGraph / LangChain の使い方に合わせて invoke / run 等を選択
+    # ここでは .invoke() をデフォルトとし、なければ callable としてそのまま呼ぶ。
+    if hasattr(app, "invoke"):
+        result = app.invoke(payload)  # type: ignore[attr-defined]
+    elif callable(app):
+        result = app(payload)
+    else:
+        raise RuntimeError(
+            "取得した app が実行可能ではありません。invoke() メソッドまたはコール可能オブジェクトである必要があります。"
+        )
+
+    # ---- 結果からテキストを取り出す ----
+    # 多くの場合 result は dict を想定。
+    # ここで "answer" キーを優先的に見る。
+    if isinstance(result, dict):
+        # dr_workflow の出力仕様に応じてここを調整
+        # 例: {"answer": "..."} or {"troubleshooting_report": "..."}
+        if "answer" in result:
+            return str(result["answer"])
+        if "troubleshooting_report" in result:
+            return str(result["troubleshooting_report"])
+        # それ以外の場合は dict 全体を文字列化
+        return str(result)
+
+    # dict でない場合はそのまま文字列にして返す
+    return str(result)
+
+
+
+
+
+
+
+
+
+main.py
+
+
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Dict, List, Any
+from datetime import datetime
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from agent_app import fast  # fast-agent 实例，里面有 interview_agent / summary_agent / title_agent
+
+from session_utils import (
+    user_might_want_to_end,
+    has_repeated_answers,
+    user_gave_blank_responses,
+)
+from session_storage import save_session_to_json
+from models import SessionData, ChatMessage, ChatRequest  # ★ 从 models 里带 ChatRequest
+from troubleshooter.dr_api import run_troubleshooter
+
+
+# ==========================
+# FastAPI 基本设置
+# ==========================
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],        # 开发期先放开，之后可以收紧
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 内存中的 session 存储
+store: Dict[str, Dict[str, Any]] = {}
+
+
+# ==========================
+# Pydantic 模型（仅本文件用）
+# ==========================
+class ChatResponse(BaseModel):
+  reply: str
+  show_end_prompt: bool = False  # 是否向前端提示“要不要结束采访”
+
+
+class EndSessionRequest(BaseModel):
+  user_id: str
+
+
+# ==========================
+# 聊天接口
+# ==========================
+@app.post("/chat/{session_id}", response_model=ChatResponse)
+async def chat(session_id: str, req: ChatRequest):
+  """
+  单轮聊天：
+  - 负责维护 session 状态（history / answer_log / user_inputs）
+  - 根据用户输入判断是否提示结束
+  - 调用 fast-agent 的 interview_agent 输出回答
+  - 根据回答重复度再次判断是否提示结束
+  """
+
+  # ---------- 初始化 session ----------
+  if session_id not in store:
+    store[session_id] = {
+      "history": [],        # [{"role": "user", "content": ...}, {"role": "assistant", ...}, ...]
+      "asked_end": False,   # 是否已经提示过“要不要结束”
+      "answer_log": [],     # 归一化后的回答文本，用于重复检测
+      "user_inputs": [],    # 最近几次用户输入，用于判断是否空输入/无响应
+      "user_id": None,
+      "start_time": datetime.utcnow(),
+    }
+
+  session = store[session_id]
+  history: List[Dict[str, str]] = session["history"]
+  answer_log: List[str] = session["answer_log"]
+  user_inputs: List[str] = session["user_inputs"]
+
+  # ---------- 统一清洗输入 ----------
+  raw = req.message if req.message is not None else ""
+  msg = raw.strip()
+  msg_lc = msg.lower()
+
+  # 维护最近 5 条用户输入窗口
+  user_inputs.append(msg)
+  if len(user_inputs) > 5:
+    user_inputs.pop(0)
+
+  # ---------- 1) 处理空输入/无响应 ----------
+  if not session["asked_end"]:
+    if (msg == "") or user_gave_blank_responses(user_inputs):
+      session["asked_end"] = True
+      return ChatResponse(
+        reply="您好像暂时没有更多补充，如果需要，我们可以结束这次采访。",
+        show_end_prompt=True,
+      )
+
+  # ---------- 2) 检测用户可能想结束 ----------
+  if not session["asked_end"] and user_might_want_to_end(msg_lc):
+    session["asked_end"] = True
+    return ChatResponse(
+      reply="看起来您可能想结束采访，请问是否还有其他问题要补充？",
+      show_end_prompt=True,
+    )
+
+  # ---------- 3) 调用 fast-agent ----------
+  try:
+    async with fast.run() as agent:
+            if req.use_troubleshooter:
+                # ★ 1) 先调用 troubleshooter 获取故障分析结果
+                ts_report = run_troubleshooter(
+                    message=msg,
+                    history=history,  # 直接复用当前 session 的 history
+                )
+
+                # ★ 2) 再把 troubleshooter 的结果 + 用户问题，一起给 interview_agent
+                agent_input = (
+                    "【以下はトラブルシューティングモジュールの分析結果です。"
+                    "これを踏まえて、ユーザーに分かりやすく回答してください】\n\n"
+                    f"{ts_report}\n\n"
+                    "【ユーザーの今回の質問】\n"
+                    f"{msg}"
+                )
+            else:
+                # 通常モード：そのまま質問だけ渡す
+                agent_input = msg
+
+            answer_text = str(await agent.interview_agent(agent_input)).strip()
+  except Exception as e:
+    raise HTTPException(status_code=500, detail=f"fast-agent 调用失败: {e}")
+
+
+  # 把本轮对话写入 history
+  history.append({"role": "user", "content": msg})
+  history.append({"role": "assistant", "content": answer_text})
+
+  # 标准化回答后写入 answer_log，用于重复检测
+  norm_ans = " ".join(answer_text.lower().split())
+  answer_log.append(norm_ans)
+
+  # ---------- 4) 重复回答检测 ----------
+  if not session["asked_end"] and has_repeated_answers(answer_log):
+    session["asked_end"] = True
+    return ChatResponse(
+      reply="我注意到我们有些回答已经重复多次，请问是否需要结束本次采访？",
+      show_end_prompt=True,
+    )
+
+  # 默认正常返回回答
+  return ChatResponse(reply=answer_text)
+
+
+# ==========================
+# 结束 session + 总结 & 保存
+# ==========================
+@app.post("/end_session/{session_id}")
+async def end_session(session_id: str, req: EndSessionRequest):
+  if session_id not in store:
+    raise HTTPException(status_code=404, detail="Session not found")
+
+  session = store[session_id]
+  session["user_id"] = req.user_id
+  history: List[Dict[str, str]] = session["history"]
+
+  # 把整场聊天拼成原始文本，交给 summary_agent
+  full_chat = "\n".join(
+    f"{'用户' if m['role'] == 'user' else '助手'}: {m['content']}"
+    for m in history
+  )
+
+  try:
+    async with fast.run() as agent:
+      summary = str(await agent.summary_agent(full_chat)).strip()
+      title = str(await agent.title_agent(summary)).strip()
+  except Exception as e:
+    raise HTTPException(status_code=500, detail=f"fast-agent 总结/标题失败: {e}")
+
+  # 构造 SessionData 并持久化
+  chat_log = [ChatMessage(role=m["role"], content=m["content"]) for m in history]
+
+  session_data = SessionData(
+    session_id=session_id,
+    user_id=session["user_id"] or "unknown",
+    start_time=session["start_time"],
+    end_time=datetime.utcnow(),
+    summary=summary,
+    title=title,
+    chat_log=chat_log,
+  )
+
+  path = save_session_to_json(session_data)
+
+  return {
+    "message": "Session saved",
+    "file": path,
+    "summary": summary,
+    "title": title,
+  }
+
+
+# ==========================
+# 文件上传（供前端发送文件）
+# ==========================
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+  try:
+    os.makedirs("uploaded_files", exist_ok=True)
+    file_location = f"uploaded_files/{file.filename}"
+    with open(file_location, "wb") as f:
+      content = await file.read()
+      f.write(content)
+
+    return {
+      "message": "File uploaded successfully",
+      "filename": file.filename,
+      "saved_to": file_location,
+    }
+  except Exception as e:
+    raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
+
+
+
+model.py
+
+from pydantic import BaseModel
+from typing import List
+from datetime import datetime
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+class SessionData(BaseModel):
+    session_id: str
+    user_id: str
+    start_time: datetime
+    end_time: datetime
+    summary: str
+    title: str 
+    chat_log: List[ChatMessage]
+
+class ChatRequest(BaseModel):
+    message: str
+    use_troubleshooter: bool = False
+
+
+
+inter/page.tsx
+
+
+'use client';
+
+import { useParams, useSearchParams } from 'next/navigation';
+import { useState, useEffect, useRef } from 'react';
+import Sidebar from '@/components/Sidebar';
+import ChatWindow from '@/components/ChatWindow';
+import InputPanel from '@/components/InputPanel';
+import Header from '@/components/Header';
+
+interface Message {
+  type: 'question' | 'answer' | 'loading';
+  text: string;
+  summary?: boolean;
+  fileName?: string;
+  fileType?: string;
+}
+
+export default function InterviewPage() {
+  const { sessionId } = useParams();
+  const searchParams = useSearchParams();
+  const qParam = searchParams.get('q');
+
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [finished, setFinished] = useState(false);
+  const [summary, setSummary] = useState('');
+  const [saving, setSaving] = useState(false);
+  const sentOnceRef = useRef(false);
+
+  // ★ Troubleshooter 开关状态
+  const [useTroubleshooter, setUseTroubleshooter] = useState(false);
+
+  useEffect(() => {
+    if (qParam && !sentOnceRef.current) {
+      sentOnceRef.current = true;
+      setInput(qParam);
+      handleSend(qParam);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qParam]);
+
+  const handleSend = async (question?: string, file?: File) => {
+    const text = question ?? input;
+    if (!text.trim() && !file) return;
+
+    // 1. 先处理文件上传
+    if (file) {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        await fetch('http://localhost:8000/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        // ✅ 添加文件消息
+        setMessages((prev) => [
+          ...prev,
+          {
+            type: 'question',
+            text: '',
+            fileName: file.name,
+            fileType: file.type?.split('/')[1] || 'file',
+          },
+        ]);
+      } catch (error) {
+        console.error('Upload failed:', error);
+        setMessages((prev) => [
+          ...prev,
+          { type: 'answer', text: '❌ 文件上传失败，请稍后重试。' },
+        ]);
+        return;
+      }
+    }
+
+    // 2. 处理文本输入
+    if (text.trim()) {
+      setMessages((prev) => [...prev, { type: 'question', text }]);
+      setInput('');
+      setMessages((prev) => [...prev, { type: 'loading', text: '...' }]);
+
+      try {
+        const res = await fetch(`http://localhost:8000/chat/${sessionId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: text,
+            // ★ 把开关状态传给后端
+            use_troubleshooter: useTroubleshooter,
+          }),
+        });
+
+        const data = await res.json();
+
+        setMessages((prev) => {
+          const newMessages = [...prev];
+          const idx = newMessages.findIndex((msg) => msg.type === 'loading');
+          if (idx !== -1) {
+            newMessages[idx] = { type: 'answer', text: data.reply };
+          } else {
+            newMessages.push({ type: 'answer', text: data.reply });
+          }
+          return newMessages;
+        });
+      } catch (error) {
+        setMessages((prev) => {
+          const newMessages = [...prev];
+          const idx = newMessages.findIndex((msg) => msg.type === 'loading');
+          if (idx !== -1) {
+            newMessages[idx] = {
+              type: 'answer',
+              text: '⚠️ 出错了，无法连接到服务器。',
+            };
+          } else {
+            newMessages.push({
+              type: 'answer',
+              text: '⚠️ 出错了，无法连接到服务器。',
+            });
+          }
+          return newMessages;
+        });
+      }
+    }
+  };
+
+  const handleFinish = async () => {
+    if (saving || finished) return;
+    setSaving(true);
+
+    setMessages((prev) => [
+      ...prev,
+      { type: 'loading', text: '📄 总结生成中，请稍候...' },
+    ]);
+
+    try {
+      const res = await fetch(
+        `http://localhost:8000/end_session/${sessionId}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: 'user001',
+          }),
+        }
+      );
+
+      const data = await res.json();
+      setSummary(data.summary);
+
+      setMessages((prev) => {
+        const newMessages = [...prev];
+        const idx = newMessages.findIndex(
+          (msg) =>
+            msg.type === 'loading' && msg.text.includes('总结生成中')
+        );
+        if (idx !== -1) {
+          newMessages[idx] = {
+            type: 'answer',
+            text: `✅ 采访已结束。以下是总结：\n\n${data.summary}`,
+            summary: true,
+          };
+        } else {
+          newMessages.push({
+            type: 'answer',
+            text: `✅ 采访已结束。以下是总结：\n\n${data.summary}`,
+            summary: true,
+          });
+        }
+        return newMessages;
+      });
+
+      setFinished(true);
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        { type: 'answer', text: '⚠️ 保存失败，请稍后重试。' },
+      ]);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex h-screen">
+      <Sidebar
+        onNewChat={() => (window.location.href = '/')}
+        onSelectCategory={(cat) => console.log('Category selected:', cat)}
+        onSelectRecentChat={(title) => console.log('Chat selected:', title)}
+      />
+      <div className="flex flex-col flex-1 bg-white">
+        {/* ★ 统一的顶部栏 */}
+        <Header
+          title="インタビュー"
+          useTroubleshooter={useTroubleshooter}
+          onToggle={() => setUseTroubleshooter((prev) => !prev)}
+        />
+
+        {/* 聊天窗口 */}
+        <ChatWindow messages={messages} />
+
+        {/* 底部输入框 */}
+        <InputPanel
+          value={input}
+          onChange={setInput}
+          onSend={(text, file) => handleSend(text, file)}
+          onUpload={(file) => handleSend(undefined, file)}
+          onFinish={handleFinish}
+          showFinish={true}
+          isFinishing={saving}
+        />
+      </div>
+    </div>
+  );
+}
+
+
+
+
+
+
+
+app/page.tsx
+
+'use client';
+
+import { useRouter } from 'next/navigation';
+import { v4 as uuidv4 } from 'uuid';
+import { useEffect, useState } from 'react';
+import Sidebar from '@/components/Sidebar';
+import Welcome from '@/components/Welcome';
+import InputPanel from '@/components/InputPanel';
+import Header from '@/components/Header';  // ★ 新增：统一的顶部栏组件
+
+const promptPool = [
+  'Handler is stuck. What should I do?',
+  'Why is the alignment always off?',
+  'Etcher shows vacuum alarm. How to fix it?',
+  "CVD can't reach target temp. Possible causes?",
+  'Load lock has a leak warning. What now?',
+  "Robot can't pick up wafers.",
+  'Coating thickness is uneven. How to adjust?',
+  'PVD says target is worn out. What next?',
+  'Edge defects keep appearing. Any ideas?',
+  'Recipe froze during run. How do I recover?',
+];
+
+export default function HomePage() {
+  const router = useRouter();
+  const [input, setInput] = useState('');
+  const [prompts, setPrompts] = useState<string[]>([]);
+  const [useTroubleshooter, setUseTroubleshooter] = useState(false); // 主页也有 TS 开关
+
+  useEffect(() => {
+    const shuffled = [...promptPool].sort(() => 0.5 - Math.random());
+    setPrompts(shuffled.slice(0, 3));
+  }, []);
+
+  const startInterview = (question: string) => {
+    if (!question.trim()) return;
+    const sessionId = uuidv4();
+    const tsFlag = useTroubleshooter ? '1' : '0'; // 先带在 URL 里，之后 Interview 页想用也方便
+    router.push(
+      `/interview/${sessionId}?q=${encodeURIComponent(question)}&ts=${tsFlag}`,
+    );
+  };
+
+  return (
+    <div className="flex h-screen">
+      <Sidebar
+        onNewChat={() => router.push('/')}
+        onSelectCategory={(cat) => console.log('分类:', cat)}
+        onSelectRecentChat={(chat) => console.log('聊天:', chat)}
+      />
+
+      {/* 右侧主区域 */}
+      <div className="flex flex-col flex-1 bg-white">
+        {/* 顶部标题 + Troubleshooter 开关（用 Header 组件，和 Interview 页完全一致） */}
+        <Header
+          title="インタビュー"
+          useTroubleshooter={useTroubleshooter}
+          onToggle={() => setUseTroubleshooter((prev) => !prev)}
+        />
+
+        {/* 中间 Welcome + 推荐问题 + 底部输入框 */}
+        <div className="relative flex-1 flex flex-col items-center justify-center text-center">
+          <Welcome onSelectQuestion={startInterview} />
+
+          {/* 推荐问题按钮 */}
+          <div className="absolute bottom-[96px] w-full flex justify-center gap-2">
+            {prompts.map((q, i) => (
+              <button
+                key={i}
+                onClick={() => startInterview(q)}
+                className="px-4 py-2 border border-blue-300 rounded-lg text-sm hover:bg-blue-50 bg-white"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+
+          {/* 底部输入框 */}
+          <div className="absolute bottom-0 w-full">
+            <InputPanel
+              value={input}
+              onChange={setInput}
+              onSend={() => startInterview(input)}
+              onUpload={() => console.log('上传')}
+              showFinish={false}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+
+
+compon
+
+chatwidown
+
+
+'use client';
+
+import { useEffect, useRef } from 'react';
+
+interface Message {
+  type: 'question' | 'answer' | 'loading';
+  text: string;
+  summary?: boolean;
+  fileName?: string;
+  fileType?: string;
+}
+
+interface ChatWindowProps {
+  messages: Message[];
+}
+
+export default function ChatWindow({ messages }: ChatWindowProps) {
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  return (
+    <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4 bg-white">
+      {messages.map((msg, idx) => {
+        const isUser = msg.type === 'question';
+
+        return (
+          <div
+            key={idx}
+            className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
+          >
+            <div
+              className={`max-w-[70%] px-4 py-2 rounded-2xl text-sm whitespace-pre-wrap
+                ${msg.type === 'question' ? 'bg-blue-500 text-white' : ''}
+                ${
+                  msg.type === 'answer' && msg.summary
+                    ? 'bg-green-100 text-green-800 border border-green-400'
+                    : ''
+                }
+                ${
+                  msg.type === 'answer' && !msg.summary
+                    ? 'bg-gray-200 text-gray-800'
+                    : ''
+                }
+                ${
+                  msg.type === 'loading'
+                    ? 'bg-gray-100 text-gray-500 animate-pulse'
+                    : ''
+                }
+              `}
+            >
+              {/* ✅ 渲染文件卡片 */}
+              {msg.fileName ? (
+                <div className="flex items-center gap-3 bg-pink-100 rounded-xl px-3 py-2 w-fit shadow-sm border border-pink-200">
+                  <div className="flex flex-col text-sm max-w-[180px]">
+                    <span className="font-medium text-gray-800 truncate">
+                      {msg.fileName}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {msg.fileType?.toUpperCase() || 'FILE'}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                msg.text
+              )}
+            </div>
+          </div>
+        );
+      })}
+      <div ref={bottomRef} />
+    </div>
+  );
+}
+
+
+
+
+
+
+Header.tsx
+
+
+'use client';
+
+interface HeaderProps {
+  title: string;
+  useTroubleshooter: boolean;
+  onToggle: () => void;
+}
+
+export default function Header({ title, useTroubleshooter, onToggle }: HeaderProps) {
+  return (
+    <div className="h-14 border-b border-gray-300 bg-[#FFFAF2] flex items-center justify-between px-6">
+      {/* 左侧标题 */}
+      <h1 className="text-xl font-bold text-gray-800">{title}</h1>
+
+      {/* 右侧 Troubleshooter 开关 */}
+      <div
+        onClick={onToggle}
+        className="flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-full cursor-pointer border hover:bg-gray-200"
+      >
+        <span
+          className={`w-3 h-3 rounded-full ${
+            useTroubleshooter ? 'bg-green-500' : 'bg-gray-400'
+          }`}
+        />
+        <span className="font-medium text-gray-600">
+          Troubleshooter： {useTroubleshooter ? 'ON' : 'OFF'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+
+
+
+
+input
+
+
+
+'use client';
+
+import { useRef, useState } from 'react';
+
+interface InputPanelProps {
+  value: string;
+  onChange: (val: string) => void;
+  onSend: (text: string, file?: File) => void;
+  onUpload?: (file: File) => void;
+  onFinish?: () => void;
+  showFinish?: boolean;
+  isFinishing?: boolean;
+}
+
+const InputPanel = ({
+  value,
+  onChange,
+  onSend,
+  onFinish,
+  showFinish = true,
+  isFinishing = false,
+}: InputPanelProps) => {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      triggerSend();
+    }
+  };
+
+  const triggerSend = () => {
+    if (!value.trim() && !selectedFile) return;
+    onSend(value, selectedFile || undefined);
+    onChange('');
+    setSelectedFile(null);
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+    }
+  };
+
+  return (
+    <div className="w-full px-4 py-3 border-t border-gray-200 bg-white flex justify-center">
+      <div className="w-full max-w-4xl flex flex-col gap-3">
+        {/* 文件卡片 */}
+        {selectedFile && (
+          <div className="flex items-center gap-3 bg-pink-100 rounded-xl px-4 py-3 w-fit shadow-sm border border-pink-200">
+            <div className="flex flex-col text-sm max-w-[200px]">
+              <span className="font-semibold text-gray-800 truncate">{selectedFile.name}</span>
+              <span className="text-gray-500 text-xs">
+                {selectedFile.type?.split('/')[1]?.toUpperCase() || 'FILE'}
+              </span>
+            </div>
+
+            <button
+              onClick={() => setSelectedFile(null)}
+              className="ml-2 text-gray-500 hover:text-gray-800 rounded-full p-1 transition"
+              title="Remove file"
+            >
+              <svg
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          </div>
+        )}
+
+        {/* 输入框 + Finish 按钮同一行 */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center flex-1 px-4 py-2 border border-black rounded-full shadow bg-gradient-to-b from-white to-gray-50">
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="text-xl text-gray-500"
+              title="Upload file"
+            >
+              📎
+            </button>
+
+            <input
+              type="file"
+              ref={fileInputRef}
+              className="hidden"
+              onChange={handleFileChange}
+            />
+
+            <input
+              type="text"
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              onKeyDown={handleKeyPress}
+              placeholder="type your trouble here"
+              className="flex-1 px-4 bg-transparent border-none focus:outline-none text-gray-800 placeholder-gray-400"
+            />
+
+            <button className="text-xl mx-2" title="Voice input (coming soon)">🎤</button>
+
+            <button
+              onClick={triggerSend}
+              className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white text-lg"
+              title="Send"
+            >
+              ➤
+            </button>
+          </div>
+
+          {showFinish && (
+            <button
+              onClick={onFinish}
+              disabled={isFinishing}
+              className={`flex-shrink-0 px-4 py-2 rounded-lg text-sm transition ${
+                isFinishing
+                  ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                  : 'bg-gray-300 hover:bg-gray-400'
+              }`}
+              title="Finish this interview"
+            >
+              {isFinishing ? 'Generating...' : 'Finish'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default InputPanel;
