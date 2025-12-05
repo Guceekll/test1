@@ -1,20 +1,14 @@
 # troubleshooter/dr_api.py
-# トラブルシューティング用 LangGraph をバックエンドから呼び出すためのラッパー
+# ============================================================
+# Deep Research トラブルシューティング用の薄いラッパーモジュール
+# ・他モジュール（main.py など）からは run_troubleshooter() だけを呼び出せばよい
+# ・実際のワークフロー実行は dr_workflow.run_troubleshooting() に委譲する
+# ============================================================
 
 from typing import List, Dict, Any, Optional
 
-from .dr_workflow import workflow  # 既存の StateGraph をインポート
-
-
-# モジュール読み込み時に一度だけ compile しておく
-try:
-    app = workflow.compile()
-except Exception as e:
-    print("=== troubleshooter: workflow.compile() に失敗しました ===")
-    import traceback
-    traceback.print_exc()
-    print("=== ここまで ===")
-    app = None
+# 既存のワークフロー入口関数をインポート（※ dr_workflow 自体は変更しない）
+from .dr_workflow import run_troubleshooting
 
 
 def run_troubleshooter(
@@ -22,38 +16,41 @@ def run_troubleshooter(
     history: Optional[List[Dict[str, str]]] = None,
 ) -> str:
     """
-    トラブルシューティング LangGraph を 1 回だけ実行して、
-    optimizer_answer または report を文字列として返す。
+    Troubleshooter の統一エントリポイント。
 
-    - message: ユーザーの今回の質問（1ターン分）
-    - history: これまでの対話履歴（オプション）
-      （今は使っていないが、必要になれば state に埋め込めるようにしてある）
+    Parameters
+    ----------
+    message : str
+        今回ユーザーが入力した質問テキスト（1ターン分）。
+    history : Optional[List[Dict[str, str]]]
+        これまでの対話履歴（任意）。
+        形式は main.py の history と同じ
+        [{'role': 'user' | 'assistant', 'content': '...'}, ...] を想定。
 
-    dr_nodes.py / dr_workflow.py / dr_demo.py には一切手を入れない前提。
+    Returns
+    -------
+    str
+        ユーザーへ返すためのトラブルシューティング結果テキスト。
     """
-    # compile に失敗して app が None の場合は、安全にフォールバック
-    if app is None:
-        return "【トラブルシューティングモジュールを初期化できなかったため、今回は通常の回答フローのみを利用します。】"
-
     try:
-        # dr_demo.py と同じ形で state を構築（最低限 user_input のみ）
-        state: Dict[str, Any] = {
-            "user_input": message,
-        }
+        # ----------------------------------------------------
+        # dr_workflow.run_troubleshooting に処理を委譲する
+        #   user_input には今回の message をそのまま渡す。
+        #   （必要であれば、ここで history を使って事前要約するなども可能）
+        # ----------------------------------------------------
+        final_state: Any = run_troubleshooting(message)
 
-        # 将来、履歴を使いたくなったらここを拡張すればよい
-        # if history:
-        #     state["query_history"] = [m["content"] for m in history if m["role"] == "user"]
-
-        # LangGraph を実行
-        result = app.invoke(state)
-
-        # dr_nodes の実装に合わせて、出力フィールドを優先的に取得
-        text = (
-            result.get("optimizer_answer")
-            or result.get("report")
-            or ""
-        )
+        # final_state は TroubleState(dict) を想定しているので、
+        # dict として扱って出力フィールドを取り出す。
+        if isinstance(final_state, dict):
+            # dr_nodes.py の仕様に合わせて優先順位を付ける
+            text = (
+                final_state.get("optimizer_answer")
+                or final_state.get("report")
+                or ""
+            )
+        else:
+            text = final_state
 
         if not isinstance(text, str):
             text = str(text)
@@ -61,12 +58,11 @@ def run_troubleshooter(
         return text
 
     except Exception:
-        # ここでエラーをログに出すが、例外は外に投げない（500 を防ぐ）
+        # ここで例外を握りつぶし、バックエンド全体が 500 にならないようにする
         print("=== run_troubleshooter で例外発生 ===")
         import traceback
         traceback.print_exc()
         print("=== 例外ここまで ===")
 
-        # 失敗したときはプレースホルダ文を返す
+        # 失敗した時はフォールバック用メッセージを返す
         return "【トラブルシューティングモジュールでエラーが発生しました。今回は通常の回答フローのみを利用します。】"
-
